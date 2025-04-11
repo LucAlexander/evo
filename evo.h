@@ -15,23 +15,26 @@ typedef struct layer {
 	layer** next;
 	uint64_t next_count;
 	uint64_t next_capacity;
+	uint64_t pass_index;
 	union {
 		struct {
+			uint64_t width;
 			double* output;
+			// width x number of input weights, in same order as layer** prev
 			double** weights;
 			double* bias;
 			activation_function activation;
-			uint64_t width;
 		} layer;
 		struct {
-			double* output;
 			uint64_t width;
+			double* output;
 		} input;
 	} data;
 	enum {
 		LAYER_NODE,
 		INPUT_NODE,
 	} tag;
+	uint8_t simulated;
 } layer;
 
 typedef struct network {
@@ -49,8 +52,10 @@ layer* layer_init(pool* const mem, uint64_t width);
 void layer_link(pool* const mem, layer* const a, layer* const b);
 void layer_unlink(layer* const a, layer* const b);
 void layer_insert(pool* const mem, layer* const a, layer* const b, layer* const c);
+void reset_simulation_flags(layer* const node);
+void allocate_weights(layer* const node); // TODO make sure simulation flags are reset after this is called.
 
-void forward(layer* const node);
+void forward(layer* const node, uint64_t pass_index);
 void backward(layer* const node);
 
 #endif
