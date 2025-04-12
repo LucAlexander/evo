@@ -4,11 +4,11 @@
 
 #define TEMP_POOL_SIZE 0x1000000
 
-typedef void (*activation_function)(double* const, const double* const);
-typedef void (*loss_function)(double* const, const double* const);
-typedef void (*loss_derivative)(double* const, const double* const, const double* const);
-typedef void (*bias_init)(double* const);
-typedef void (*weight_init)(double* const);
+typedef void (*activation_function)(double* const, const double* const, uint64_t);
+typedef void (*loss_function)(double* const, const double* const, uint64_t);
+typedef void (*loss_derivative)(double* const, const double* const, const double* const, uint64_t);
+typedef void (*bias_init)(double* const, uint64_t);
+typedef void (*weight_init)(double* const, uint64_t);
 
 typedef struct layer layer;
 typedef struct layer {

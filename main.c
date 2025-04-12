@@ -5,7 +5,13 @@
 #include <string.h>
 
 network
-network_init(pool* const mem, uint64_t input, uint64_t output, weight_init weight, bias_init bias, uint64_t batch_size, double learning_rate, loss_function l, loss_derivative ld){
+network_init(
+	pool* const mem,
+	uint64_t input, uint64_t output,
+	weight_init weight, bias_init bias,
+	uint64_t batch_size, double learning_rate,
+	loss_function l, loss_derivative ld
+){
 	network net = {
 		.mem = mem,
 		.temp = pool_alloc(TEMP_POOL_SIZE, POOL_STATIC),
@@ -181,12 +187,17 @@ forward(layer* const node, uint64_t pass_index){
 				continue;
 			}
 			for (uint64_t k = 0;k<prev->data.layer.width;++k){
-				node->data.layer.output[i] += prev->data.layer.activated[k] * node->data.layer.weights[i][weight_index];
+				double w = node->data.layer.weights[i][weight_index];
+				node->data.layer.output[i] += prev->data.layer.activated[k] * w;
 				weight_index += 1;
 			}
 		}
 	}
-	node->data.layer.activation(node->data.layer.activated, node->data.layer.output);
+	node->data.layer.activation(
+		node->data.layer.activated,
+		node->data.layer.output,
+		node->data.layer.width
+	);
 	node->simulated = 1;
 	for (uint64_t i = 0;i<node->next_count;++i){
 		forward(node->next[i], pass_index);
@@ -204,7 +215,7 @@ void backward(network* const net, layer* const node, uint64_t pass_index){
 	pool_empty(&net->temp);
 	double* dadz = pool_request(&net->temp, sizeof(double)*node->data.layer.width);
 	double* dcda = node->data.layer.activation_gradients;
-	node->data.layer.derivative(dadz, node->data.layer.output);
+	node->data.layer.derivative(dadz, node->data.layer.output, node->data.layer.width);
 	for (uint64_t i = 0;i<node->data.layer.width;++i){
 		node->data.layer.bias_gradients[i] += 1 * dadz[i] * dcda[i];
 	}
@@ -233,7 +244,8 @@ void backward(network* const net, layer* const node, uint64_t pass_index){
 			}
 			for (uint64_t t = 0;t<prev->data.layer.width;++t){
 				for (uint64_t n = 0;n<node->data.layer.width;++n){
-					prev->data.layer.activation_gradients[t] += node->data.layer.weights[n][i] * dadz[n] * dcda[n];
+					double w = node->data.layer.weights[n][i]
+					prev->data.layer.activation_gradients[t] += w * dadz[n] * dcda[n];
 				}
 			}
 			break;
@@ -254,7 +266,8 @@ apply_gradients(network* const net, layer* const node, uint64_t pass_index){
 		return;
 	}
 	for (uint64_t i = 0;i<node->data.layer.width;++i){
-		node->data.layer.bias[i] += net->learning_rate * (node->data.layer.bias_gradients[i]/net->batch_size);
+		double average = (node->data.layer.bias_gradients[i]/net->batch_size);
+		node->data.layer.bias[i] += net->learning_rate * average;
 		node->data.layer.bias_gradients[i] = 0;
 		node->data.layer.activation_gradients[i] = 0;
 	}
@@ -266,7 +279,8 @@ apply_gradients(network* const net, layer* const node, uint64_t pass_index){
 				weight_index += prev->data.layer.width;
 			}
 			for (uint64_t k = 0;k<prev->data.layer.width;++k){
-				node->data.layer.weights[i][weight_index] += net->learning_rate * (node->data.layer.weight_gradients[i][weight_index]/net->batch_size);
+				double average = (node->data.layer.weight_gradients[i][weight_index]/net->batch_size);
+				node->data.layer.weights[i][weight_index] += net->learning_rate * average;
 				node->data.layer.weight_gradients[i][weight_index] = 0;
 				weight_index += 1;
 			}
@@ -318,8 +332,17 @@ void network_train(network* const net, double** data, uint64_t data_size, double
 			memcpy(net->input->data.input.output, data[i], net->input->data.input.width);
 			forward(net->input, pass);
 			pass += 1;
-			net->loss(net->loss_output, net->output->data.layer.activated);
-			net->derivative(net->output->data.layer.activation_gradients, net->output->data.layer.activated, expected[i]);
+			net->loss(
+				net->loss_output,
+				net->output->data.layer.activated,
+				net->output->data.layer.width
+			);
+			net->derivative(
+				net->output->data.layer.activation_gradients,
+				net->output->data.layer.activated,
+				expected[i],
+				net->output->data.layer.width
+			);
 			backward(net, net->output, pass);
 			pass += 1;
 		}
