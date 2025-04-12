@@ -2,8 +2,10 @@
 #define EVOMORPH_H
 #include "kickstart.h"
 
-typedef void (*activation)(double* const, const double* const);
-typedef void (*loss)(double* const, const double* const);
+#define TEMP_POOL_SIZE 0x1000000
+
+typedef void (*activation_function)(double* const, const double* const);
+typedef void (*loss_function)(double* const, const double* const);
 typedef void (*loss_derivative)(double* const, const double* const, const double* const);
 typedef void (*bias_init)(double* const);
 typedef void (*weight_init)(double* const);
@@ -45,7 +47,7 @@ typedef struct layer {
 
 typedef struct network {
 	pool* mem;
-	pool* temp;
+	pool temp;
 	layer* input;
 	layer* output;
 	loss_function loss;
@@ -57,18 +59,18 @@ typedef struct network {
 	double learning_rate;
 } network;
 
-network network_init(pool* const mem, uint64_t input, uint64_t output, weight_init w, bias_init b, uint64_t batch_size, double learning_rate, loss_function l, loss_function ld);
+network network_init(pool* const mem, uint64_t input, uint64_t output, weight_init w, bias_init b, uint64_t batch_size, double learning_rate, loss_function l, loss_derivative ld);
 layer* input_init(pool* const mem, uint64_t width);
 layer* layer_init(pool* const mem, uint64_t width);
 void layer_link(pool* const mem, layer* const a, layer* const b);
 void layer_unlink(layer* const a, layer* const b);
 void layer_insert(pool* const mem, layer* const a, layer* const b, layer* const c);
 void reset_simulation_flags(layer* const node);
-void allocate_weights(layer* const node, uint64_t pass_index);
+void allocate_weights(pool* const mem, layer* const node, uint64_t pass_index);
 void forward(layer* const node, uint64_t pass_index);
 void backward(network* const net, layer* const node, uint64_t pass_index);
-void apply_gradients(network* const net, layer* const node);
+void apply_gradients(network* const net, layer* const node, uint64_t pass_index);
 void zero_gradients(layer* const node, uint64_t pass_index);
-void network_train(network* const net, double* data, uint64_t data_size, double** expected);
+void network_train(network* const net, double** data, uint64_t data_size, double** expected);
 
 #endif

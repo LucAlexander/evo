@@ -1,22 +1,25 @@
+#include "evo.h"
 #include "kickstart.h"
 #include <assert.h>
 #include <stdio.h>
+#include <string.h>
 
 network
-network_init(pool* const mem, uint64_t input, uint64_t output, weight_init weight, bias_init bias, uint64_t batch_size, double learning_rate, loss_function l, loss_function ld){
+network_init(pool* const mem, uint64_t input, uint64_t output, weight_init weight, bias_init bias, uint64_t batch_size, double learning_rate, loss_function l, loss_derivative ld){
 	network net = {
 		.mem = mem,
+		.temp = pool_alloc(TEMP_POOL_SIZE, POOL_STATIC),
 		.input = input_init(mem, input),
 		.output = layer_init(mem, output),
 		.loss_output = pool_request(mem, sizeof(double)*output),
 		.loss = l,
 		.derivative=ld,
-		.bias = b,
-		.weight = w,
+		.bias = bias,
+		.weight = weight,
 		.batch_size = batch_size,
 		.learning_rate = learning_rate
 	};
-	layer_link(mem, &net.input, &net.output);
+	layer_link(mem, net.input, net.output);
 	return net;
 }
 
@@ -28,7 +31,7 @@ input_init(pool* const mem, uint64_t width){
 	input->data.input.width = width;
 	input->prev = NULL;
 	input->prev_count = 0;
-	input->prev_capacity = 0
+	input->prev_capacity = 0;
 	input->next = pool_request(mem, 2*sizeof(layer*));
 	input->next_count = 0;
 	input->next_capacity = 2;
@@ -136,12 +139,12 @@ allocate_weights(pool* const mem, layer* const node, uint64_t pass_index){
 	node->pass_index += 1;
 	if (node->tag == INPUT_NODE){
 		for (uint64_t i = 0;i<node->next_count;++i){
-			allocate_weights(mem, node->next[i]);
+			allocate_weights(mem, node->next[i], pass_index);
 		}
 		return;
 	}
-	node->data.layer.weights = pool_request(mem, sizeof(double*)*width);
-	node->data.layer.weight_gradients = pool_request(mem, sizeof(double)*width);
+	node->data.layer.weights = pool_request(mem, sizeof(double*)*node->data.layer.width);
+	node->data.layer.weight_gradients = pool_request(mem, sizeof(double)*node->data.layer.width);
 	uint64_t sum = 0;
 	for (uint64_t i = 0;i<node->prev_count;++i){
 		layer* prev = node->prev[i];
@@ -171,7 +174,7 @@ forward(layer* const node, uint64_t pass_index){
 	for (uint64_t i = 0;i<node->data.layer.width;++i){
 		node->data.layer.output[i] = node->data.layer.bias[i];
 		uint64_t weight_index = 0;
-		for (uint64_t p = 0;i<node->prev_count;++p){
+		for (uint64_t p = 0;p<node->prev_count;++p){
 			layer* prev = node->prev[p];
 			if (prev->simulated == 0){
 				weight_index += prev->data.layer.width;
@@ -198,17 +201,16 @@ void backward(network* const net, layer* const node, uint64_t pass_index){
 	if (node->tag == INPUT_NODE){
 		return;
 	}
-	pool_empty(mem);
-	double* dzdt = pool_request(temp, sizeof(double)*node->data.layer.width);
-	double* dadz = pool_request(temp, sizeof(double)*node->data.layer.width);
+	pool_empty(&net->temp);
+	double* dadz = pool_request(&net->temp, sizeof(double)*node->data.layer.width);
 	double* dcda = node->data.layer.activation_gradients;
-	node->derivative(dadz, node->data.layer.output);
+	node->data.layer.derivative(dadz, node->data.layer.output);
 	for (uint64_t i = 0;i<node->data.layer.width;++i){
-		node->bias_gradients[i] += 1 * dadz[i] * dcda[i];
+		node->data.layer.bias_gradients[i] += 1 * dadz[i] * dcda[i];
 	}
 	for (uint64_t i = 0;i<node->data.layer.width;++i){
 		uint64_t weight_index = 0;
-		for (uint64_t p = 0;<node->prev_count;++p){
+		for (uint64_t p = 0;p<node->prev_count;++p){
 			layer* prev = node->prev[p];
 			if (prev->simulated == 0){
 				weight_index += prev->data.layer.width;
@@ -231,20 +233,20 @@ void backward(network* const net, layer* const node, uint64_t pass_index){
 			}
 			for (uint64_t t = 0;t<prev->data.layer.width;++t){
 				for (uint64_t n = 0;n<node->data.layer.width;++n){
-					prev->data.layer.activation_gradients[t] += node->data.layer.weights[n][i];
+					prev->data.layer.activation_gradients[t] += node->data.layer.weights[n][i] * dadz[n] * dcda[n];
 				}
 			}
 			break;
 		}
 	}
 	for (uint64_t i = 0;i<node->prev_count;++i){
-		backward(net, mem, node->prev[i]);
+		backward(net, node->prev[i], pass_index);
 	}
 }
 
 void
-apply_gradients(network* const net, layer* const node){
-	f (node->pass_index >= pass_index){
+apply_gradients(network* const net, layer* const node, uint64_t pass_index){
+	if (node->pass_index >= pass_index){
 		return;
 	}
 	node->pass_index += 1;
@@ -252,26 +254,26 @@ apply_gradients(network* const net, layer* const node){
 		return;
 	}
 	for (uint64_t i = 0;i<node->data.layer.width;++i){
-		node->data.layer.bias[i] += net->learning_rate * node->data.layer.bias_gradients[i];
+		node->data.layer.bias[i] += net->learning_rate * (node->data.layer.bias_gradients[i]/net->batch_size);
 		node->data.layer.bias_gradients[i] = 0;
 		node->data.layer.activation_gradients[i] = 0;
 	}
 	for (uint64_t i = 0;i<node->data.layer.width;++i){
 		uint64_t weight_index = 0;
-		for (uint64_t p = 0;<node->prev_count;++p){
+		for (uint64_t p = 0;p<node->prev_count;++p){
 			layer* prev = node->prev[p];
 			if (prev->simulated == 0){
 				weight_index += prev->data.layer.width;
 			}
 			for (uint64_t k = 0;k<prev->data.layer.width;++k){
-				node->data.layer.weights[i][weight_index] += net->learning_rate * node->data.layer.weight_gradients[i][weight_index];
+				node->data.layer.weights[i][weight_index] += net->learning_rate * (node->data.layer.weight_gradients[i][weight_index]/net->batch_size);
 				node->data.layer.weight_gradients[i][weight_index] = 0;
 				weight_index += 1;
 			}
 		}
 	}
 	for (uint64_t i = 0;i<node->next_count;++i){
-		apply_gradients(node->next[i], pass_index);
+		apply_gradients(net, node->next[i], pass_index);
 	}
 }
 
@@ -290,7 +292,7 @@ zero_gradients(layer* const node, uint64_t pass_index){
 	}
 	for (uint64_t i = 0;i<node->data.layer.width;++i){
 		uint64_t weight_index = 0;
-		for (uint64_t p = 0;<node->prev_count;++p){
+		for (uint64_t p = 0;p<node->prev_count;++p){
 			layer* prev = node->prev[p];
 			if (prev->simulated == 0){
 				weight_index += prev->data.layer.width;
@@ -321,7 +323,8 @@ void network_train(network* const net, double** data, uint64_t data_size, double
 			backward(net, net->output, pass);
 			pass += 1;
 		}
-		apply_gradients(net, net->output);
+		apply_gradients(net, net->output, pass);
+		pass += 1;
 	}
 }
 
