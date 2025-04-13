@@ -3,6 +3,21 @@
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
+#include <stddef.h>
+#include <stdlib.h>
+
+/* TODO
+ * fix all functions/partials
+ * initialization of network
+ * initialization of weights and biases
+ * serialization
+ * loading
+ * multithreading
+ * SIMD
+ * parser / build step
+ * running trained model
+ */
 
 network
 network_init(
@@ -196,7 +211,8 @@ forward(layer* const node, uint64_t pass_index){
 	node->data.layer.activation(
 		node->data.layer.activated,
 		node->data.layer.output,
-		node->data.layer.width
+		node->data.layer.width,
+		node->data.layer.parameter_a
 	);
 	node->simulated = 1;
 	for (uint64_t i = 0;i<node->next_count;++i){
@@ -215,7 +231,12 @@ void backward(network* const net, layer* const node, uint64_t pass_index){
 	pool_empty(&net->temp);
 	double* dadz = pool_request(&net->temp, sizeof(double)*node->data.layer.width);
 	double* dcda = node->data.layer.activation_gradients;
-	node->data.layer.derivative(dadz, node->data.layer.output, node->data.layer.width);
+	node->data.layer.derivative(
+		dadz,
+		node->data.layer.output,
+		node->data.layer.width,
+		node->data.layer.parameter_a
+	);
 	for (uint64_t i = 0;i<node->data.layer.width;++i){
 		node->data.layer.bias_gradients[i] += 1 * dadz[i] * dcda[i];
 	}
@@ -244,7 +265,7 @@ void backward(network* const net, layer* const node, uint64_t pass_index){
 			}
 			for (uint64_t t = 0;t<prev->data.layer.width;++t){
 				for (uint64_t n = 0;n<node->data.layer.width;++n){
-					double w = node->data.layer.weights[n][i]
+					double w = node->data.layer.weights[n][i];
 					prev->data.layer.activation_gradients[t] += w * dadz[n] * dcda[n];
 				}
 			}
@@ -335,19 +356,433 @@ void network_train(network* const net, double** data, uint64_t data_size, double
 			net->loss(
 				net->loss_output,
 				net->output->data.layer.activated,
-				net->output->data.layer.width
+				expected[i],
+				net->output->data.layer.width,
+				net->loss_parameter_a
 			);
 			net->derivative(
 				net->output->data.layer.activation_gradients,
 				net->output->data.layer.activated,
 				expected[i],
-				net->output->data.layer.width
+				net->output->data.layer.width,
+				net->loss_parameter_a
 			);
 			backward(net, net->output, pass);
 			pass += 1;
 		}
 		apply_gradients(net, net->output, pass);
 		pass += 1;
+	}
+}
+
+void set_seed(time_t seed){
+	srandom(seed);
+}
+
+double uniform_distribution(double min, double max){
+	double n = ((double)random())/RAND_MAX;
+	return (n*(max-min))+min;
+}
+
+double normal_distribution(double mean, double std){
+	double u1 = uniform_distribution(0, 1);
+	double u2 = uniform_distribution(0, 1);
+	double z0 = sqrtf(-2.8*logf(u1))*cos(2.0*M_PI*u2);
+	return mean+std*z0;
+}
+
+void bias_initialization_zero(double* const buffer, uint64_t size, double a, double b){
+	memset(buffer, 0, size*sizeof(double));
+}
+
+void bias_initialization_const_flat(double* const buffer, uint64_t size, double a, double b){
+	memset(buffer, a, size*sizeof(double));
+}
+
+void bias_initialization_const_uneven(double* const buffer, uint64_t size, double a, double b){
+	for (uint64_t i = 0;i<size;++i){
+		buffer[i] = normal_distribution(a, b);
+	}
+}
+
+void weight_initialization_xavier(double** const out, uint64_t in_size, uint64_t out_size, double aa, double b){
+	float a = sqrtf(1/(in_size+out_size));
+	for (uint64_t i = 0;i<out_size;++i){
+		for (uint64_t k = 0;k<in_size;++i){
+			out[i][k] = uniform_distribution(-a, a);
+		}
+	}
+}
+
+void weight_initialization_he(double** const out, uint64_t in_size, uint64_t out_size, double aa, double b){
+	float a = sqrtf(6/in_size);
+	for (uint64_t i = 0;i<out_size;++i){
+		for (uint64_t k = 0;k<in_size;++i){
+			out[i][k] = uniform_distribution(-a, a);
+		}
+	}
+}
+
+void weight_initialization_lecun(double** const out, uint64_t in_size, uint64_t out_size, double a, double b){
+	float std = sqrtf(1/in_size);
+	for (uint64_t i = 0;i<out_size;++i){
+		for (uint64_t k = 0;k<in_size;++i){
+			out[i][k] = normal_distribution(0, std);
+		}
+	}
+}
+
+void weight_initialization_uniform(double** const out, uint64_t in_size, uint64_t out_size, double a, double b){
+	for (uint64_t i = 0;i<out_size;++i){
+		for (uint64_t k = 0;k<in_size;++i){
+			out[i][k] = uniform_distribution(a, b);
+		}
+	}
+}
+
+void weight_initialization_normal(double** const out, uint64_t in_size, uint64_t out_size, double a, double b){
+	for (uint64_t i = 0;i<out_size;++i){
+		for (uint64_t k = 0;k<in_size;++i){
+			out[i][k] = normal_distribution(a, b);
+		}
+	}
+}
+
+void loss_mse_partial(double* const output, const double* const result, const double* const expected, uint64_t size, double a){
+	for (uint64_t i = 0;i<size;++i){
+		output[i] = 2*(result[i]-expected[i]);
+	}
+}
+
+void loss_mae_partial(double* const output, const double* const result, const double* const expected, uint64_t size, double a){
+	for (uint64_t i = 0;i<size;++i){
+		double term = result[i]-expected[i];
+		output[i] = term/fabsf(term);
+	}
+}
+
+void loss_mape_partial(double* const output, const double* const result, const double* const expected, uint64_t size, double a){
+	for (uint64_t i = 0;i<size;++i){
+		double term = expected[i]-result[i];
+		output[i] = (1/powf(expected[i], 2))*term/fabsf(term);
+	}
+}
+
+void loss_huber_partial(double* const output, const double* const result, const double* const expected, uint64_t size, double a){
+	for (uint64_t i = 0;i<size;++i){
+		double term = expected[i]-result[i];
+		if (term <= a){
+			output[i] = term;
+			continue;
+		}
+		output[i] = a*(int)((0<term)-(term<0));
+	}
+}
+
+void loss_huber_modified_partial(double* const output, const double* const result, const double* const expected, uint64_t size, double a){
+	double coef = 1/a;
+	for (uint64_t i = 0;i<size;++i){
+		float term = result[i]-expected[i];
+		if (expected[i]-result[i] <= a){
+			output[i] = term*coef;
+			continue;
+		}
+		output[i] = (int)((0<term)-(term-0));
+	}
+}
+
+void loss_cross_entropy_partial(double* const output, const double* const result, const double* const expected, uint64_t size, double a){
+	for (uint64_t i = 0;i<size;++i){
+		output[i] = (-(expected[i]/result[i]))+((1-expected[i])/(1-result[i]));
+	}
+}
+
+void loss_hinge_partial(double* const output, const double* const result, const double* const expected, uint64_t size, double a){
+	for (uint64_t i = 0;i<size;++i){
+		if (expected[i]*result[i] >= 1){
+			output[i] = 0;
+		}
+		output[i] = -expected[i];
+	}
+}
+
+void activation_sigmoid_partial(double* const output, const double* const buffer, uint64_t size, double a){
+	for (uint64_t i = 0;i<size;++i){
+		float fx = 1/(1+expf(-buffer[i]));
+		output[i] = fx*(1-fx);
+	}
+}
+
+void activation_relu_partial(double* const output, const double* const buffer, uint64_t size, double a){
+	for (uint64_t i = 0;i<size;++i){
+		output[i] = (buffer[i] > 0);
+	}
+}
+
+void activation_tanh_partial(double* const output, const double* const buffer, uint64_t size, double a){
+	for (uint64_t i = 0;i<size;++i){
+		output[i] = 1-powf(tanh(buffer[i]), 2);
+	}
+}
+
+void activation_linear_partial(double* const output, const double* const buffer, uint64_t size, double a){
+	memset(output, 1, size*sizeof(float));
+}
+
+void activation_relu_leaky_partial(double* const output, const double* const buffer, uint64_t size, double a){
+	for (uint64_t i = 0;i<size;++i){
+		if (buffer[i] > 0){
+			output[i] = 1;
+			continue;
+		}
+		output[i] = 0.01;
+	}
+}
+
+void activation_relu_parametric_partial(double* const output, const double* const buffer, uint64_t size, double a){
+	for (uint64_t i = 0;i<size;++i){
+		if (buffer[i] > 0){
+			output[i] = 1;
+			continue;
+		}
+		output[i] = a;
+	}
+}
+
+void activation_elu_partial(double* const output, const double* const buffer, uint64_t size, double a){
+	for (uint64_t i = 0;i<size;++i){
+		if (buffer[i] > 0){
+			output[i] = 1;
+			continue;
+		}
+		output[i] = a+(a*(expf(buffer[i])-1));
+	}
+}
+
+void activation_softmax_partial(double* const output, const double* const buffer, uint64_t size, double a){
+	float sum = 0.0f;
+	float* softmax_values = malloc(sizeof(float)*size);
+	for (uint64_t i = 0;i<size;++i){
+		softmax_values[i] = exp(buffer[i]);
+		sum += softmax_values[i];
+	}
+	for (uint64_t i = 0;i<size;++i){
+		softmax_values[i] /= sum;
+	}
+	for (uint64_t i = 0;i<size;++i){
+		output[i] = softmax_values[i]*(1-softmax_values[i]);
+		for (uint64_t j = 0;j<size;++j){
+			if (i!=j){
+				output[i] -= softmax_values[i]*softmax_values[j];
+			}
+		}
+	}
+	free(softmax_values);
+}
+
+void activation_swish_partial(double* const output, const double* const buffer, uint64_t size, double a){
+	for (uint64_t i = 0;i<size;++i){
+		float fx = 1/(1+expf(-buffer[i]*a));
+		output[i] = fx+a*buffer[i]*fx*(1-fx);
+	}
+}
+
+void activation_gelu_partial(double* const output, const double* const buffer, uint64_t size, double a){
+	float s2op = sqrt(2/M_PI);
+	for (uint64_t i = 0;i<size;++i){
+		float x = buffer[i];
+		float inside = tanh(s2op*(x+GELU_C*powf(x, 3)));
+		output[i] = 0.5*(1+inside)+0.5*x*(1-powf(inside, 2))*s2op*(1+3*GELU_C*x*x);
+	}
+}
+
+void activation_selu_partial(double* const output, const double* const buffer, uint64_t size, double a){
+	for (uint64_t i = 0;i<size;++i){
+		double x = output[i];
+		if (x > 0){
+			output[i] = SELU_LAMBDA;
+			continue;
+		}
+		output[i] = SELU_LAMBDA*SELU_ALPHA*expf(x);
+	}
+}
+
+double loss_mse(double* const buffer, const double* const result, const double* const expected, uint64_t size, double a){
+	float sum = 0;
+	for (uint64_t i = 0;i<size;++i){
+		float loss = expected[i]-result[i];
+		buffer[i] = loss;
+		sum += loss*loss;
+	}
+	return (sum)/(size);
+}
+
+double loss_mae(double* const buffer, const double* const result, const double* const expected, uint64_t size, double a){
+	float sum = 0;
+	for (uint64_t i = 0;i<size;++i){
+		float loss = expected[i]-result[i];
+		buffer[i] = loss;
+		sum += abs(loss);
+	}
+	return sum/(size);
+}
+
+double loss_mape(double* const buffer, const double* const result, const double* const expected, uint64_t size, double a){
+	float sum = 0;
+	for (uint64_t i = 0;i<size;++i){
+		float expect = expected[i];
+		float loss = expect-result[i];
+		buffer[i] = loss;
+		sum += abs(loss/expect);
+	}
+	return sum/(size);
+}
+
+double loss_huber(double* const buffer, const double* const result, const double* const expected, uint64_t size, double a){
+	float sum = 0;
+	float hpsq = a*a*0.5;
+	for (uint64_t i = 0;i<size;++i){
+		float expect = expected[i];
+		float res = result[i];
+		float x = expect-res;
+		buffer[i] = x;
+		if (abs(x) <= a){
+			sum += x*x*0.5;
+			continue;
+		}
+		sum += (a*abs(x))-hpsq;
+	}
+	return sum;
+}
+
+double loss_huber_modified(double* const buffer, const double* const result, const double* const expected, uint64_t size, double a){
+	float sum = 0;
+	for (uint64_t i = 0;i<size;++i){
+		float expect = expected[i];
+		float res = result[i];
+		float x = expect-res;
+		buffer[i] = x;
+		x = expect*res;
+		if (x > -1){
+			sum += pow(fmax(0, 1-x),2);
+			continue;
+		}
+		sum -= 4*x;
+	}
+	return sum;
+}
+
+double loss_cross_entropy(double* const buffer, const double* const result, const double* const expected, uint64_t size, double a){
+	float sum = 0;
+	for (uint64_t i = 0;i<size;++i){
+		float expect = expected[i];
+		float res = result[i];
+		buffer[i] = expect-res;
+		sum += expect*log(res);
+	}
+	return -sum;
+}
+
+double loss_hinge(double* const buffer, const double* const result, const double* const expected, uint64_t size, double a){
+	float sum = 0;
+	for (uint64_t i = 0;i<size;++i){
+		float expect = expected[i];
+		float res = result[i];
+		buffer[i] = expect-res;
+		sum += fmax(0,1-(expect*res));
+	}
+	return sum;
+}
+
+void activation_sigmoid(double* const buffer, const double* const output, uint64_t size, double a){
+	for (uint64_t i = 0;i<size;++i){
+		buffer[i] = 1/(1+expf(-output[i]));
+	}
+}
+
+void activation_relu(double* const buffer, const double* const output, uint64_t size, double a){
+	for (uint64_t i = 0;i<size;++i){
+		buffer[i] = fmax(0,output[i]);
+	}
+}
+
+void activation_tanh(double* const buffer, const double* const output, uint64_t size, double a){
+	for (uint64_t i = 0;i<size;++i){
+		buffer[i] = tanh(output[i]);
+	}
+}
+
+void activation_binary_step(double* const buffer, const double* const output, uint64_t size, double a){
+	for (uint64_t i = 0;i<size;++i){
+		buffer[i] = output[i] >= 0;
+	}
+}
+
+void activation_linear(double* const buffer, const double* const output, uint64_t size, double a){
+	memcpy(buffer, output, size*sizeof(double));
+}
+
+void activation_relu_leaky(double* const buffer, const double* const output, uint64_t size, double a){
+	float x;
+	for (uint64_t i = 0;i<size;++i){
+		x = output[i];
+		buffer[i] = fmax(0.1*x,x);
+	}
+}
+
+void activation_relu_parametric(double* const buffer, const double* const output, uint64_t size, double a){
+	float x;
+	for (uint64_t i = 0;i<size;++i){
+		x = output[i];
+		buffer[i] = fmax(a*x, x);
+	}
+}
+
+void activation_elu(double* const buffer, const double* const output, uint64_t size, double a){
+	float x;
+	for (uint64_t i = 0;i<size;++i){
+		x = output[i];
+		if (x < 0){
+			buffer[i] = a*(expf(x)-1);
+		}
+	}
+}
+
+void activation_softmax(double* const buffer, const double* const output, uint64_t size, double a){
+	float denom = 0;
+	for (uint64_t i = 0;i<size;++i){
+		denom += expf(output[i]);
+	}
+	for (uint64_t i = 0;i<size;++i){
+		buffer[i] = expf(output[i])/denom;
+	}
+}
+
+void activation_swish(double* const buffer, const double* const output, uint64_t size, double a){
+	float x;
+	for (uint64_t i = 0;i<size;++i){
+		x = output[i];
+		buffer[i] = x/(1+expf(-x));
+	}
+}
+
+void activation_gelu(double* const buffer, const double* const output, uint64_t size, double a){
+	float x;
+	const float s2p  = sqrtf(2/M_PI);
+	for (uint64_t i = 0;i<size;++i){
+		x = output[i];
+		buffer[i] = 0.5*x*(1+tanh(s2p*(x+(GELU_C*pow(x,3)))));
+	}
+}
+
+void activation_selu(double* const buffer, const double* const output, uint64_t size, double a){
+	for (uint64_t i = 0;i<size;++i){
+		double x = output[i];
+		if (x > 0){
+			buffer[i] = SELU_LAMBDA * x;
+			continue;
+		}
+		buffer[i] = SELU_LAMBDA*SELU_ALPHA*(expf(x)-1);
 	}
 }
 

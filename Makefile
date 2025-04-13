@@ -1,2 +1,2 @@
 go:
-	gcc -o evo main.c kickstart.c -g -Wall
+	gcc -o evo main.c kickstart.c -g -Wall -lm
