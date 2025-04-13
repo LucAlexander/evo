@@ -8,9 +8,6 @@
 #include <stdlib.h>
 
 /* TODO
- * fix all functions/partials
- * initialization of network
- * initialization of weights and biases
  * serialization
  * loading
  * multithreading
@@ -19,28 +16,96 @@
  * running trained model
  */
 
+static activation_function activations[] = {
+	activation_sigmoid,
+	activation_relu,
+	activation_tanh,
+	activation_binary_step,
+	activation_linear,
+	activation_relu_leaky,
+	activation_relu_parametric,
+	activation_elu,
+	activation_softmax,
+	activation_swish,
+	activation_gelu,
+	activation_selu
+};
+
+static activation_function activation_partials[] = {
+	activation_sigmoid_partial,
+	activation_relu_partial,
+	activation_tanh_partial,
+	activation_linear_partial,
+	activation_relu_leaky_partial,
+	activation_relu_parametric_partial,
+	activation_elu_partial,
+	activation_softmax_partial,
+	activation_swish_partial,
+	activation_gelu_partial,
+	activation_selu_partial
+};
+
+static loss_function losses[] = {
+	loss_mse,
+	loss_mae,
+	loss_mape,
+	loss_huber,
+	loss_huber_modified,
+	loss_cross_entropy,
+	loss_hinge
+};
+
+static loss_derivative loss_partials[] = {
+	loss_mse_partial,
+	loss_mae_partial,
+	loss_mape_partial,
+	loss_huber_partial,
+	loss_huber_modified_partial,
+	loss_cross_entropy_partial,
+	loss_hinge_partial
+};
+
+static bias_init bias_inits[] = {
+	bias_initialization_zero,
+	bias_initialization_const_flat,
+	bias_initialization_const_uneven
+};
+
+static weight_init weight_inits[] = {
+	weight_initialization_xavier,
+	weight_initialization_he,
+	weight_initialization_lecun,
+	weight_initialization_uniform,
+	weight_initialization_normal
+};
+
 network
 network_init(
 	pool* const mem,
-	uint64_t input, uint64_t output,
-	weight_init weight, bias_init bias,
+	layer* const input, layer* const output,
+	WEIGHT_FUNC weight, BIAS_FUNC bias,
+	double weight_a, double weight_b,
+	double bias_a, double bias_b,
 	uint64_t batch_size, double learning_rate,
-	loss_function l, loss_derivative ld
+	LOSS_FUNC l
 ){
 	network net = {
 		.mem = mem,
 		.temp = pool_alloc(TEMP_POOL_SIZE, POOL_STATIC),
-		.input = input_init(mem, input),
-		.output = layer_init(mem, output),
-		.loss_output = pool_request(mem, sizeof(double)*output),
+		.input = input,
+		.output = output,
+		.loss_output = pool_request(mem, sizeof(double)*output->data.layer.width),
 		.loss = l,
-		.derivative=ld,
+		.derivative=l,
 		.bias = bias,
 		.weight = weight,
 		.batch_size = batch_size,
-		.learning_rate = learning_rate
+		.learning_rate = learning_rate,
+		.weight_parameter_a = weight_a,
+		.weight_parameter_b = weight_b,
+		.bias_parameter_a= bias_a,
+		.bias_parameter_b= bias_b
 	};
-	layer_link(mem, net.input, net.output);
 	return net;
 }
 
@@ -62,7 +127,7 @@ input_init(pool* const mem, uint64_t width){
 }
 
 layer*
-layer_init(pool* const mem, uint64_t width){
+layer_init(pool* const mem, uint64_t width, ACTIVATION_FUNC activation){
 	layer* node = pool_request(mem, sizeof(layer));
 	node->tag = LAYER_NODE;
 	node->data.layer.output = pool_request(mem, sizeof(double)*width);
@@ -72,7 +137,8 @@ layer_init(pool* const mem, uint64_t width){
 	node->data.layer.bias = pool_request(mem, sizeof(double)*width);
 	node->data.layer.bias_gradients = pool_request(mem, sizeof(double)*width);
 	node->data.layer.activation_gradients = pool_request(mem, sizeof(double)*width);
-	node->data.layer.activation = NULL;
+	node->data.layer.activation = activation;
+	node->data.layer.derivative = activation;
 	node->prev = pool_request(mem, 2*sizeof(layer*));
 	node->prev_count = 0;
 	node->prev_capacity = 2;
@@ -210,7 +276,7 @@ forward(layer* const node, uint64_t pass_index){
 			}
 		}
 	}
-	node->data.layer.activation(
+	activations[node->data.layer.activation](
 		node->data.layer.activated,
 		node->data.layer.output,
 		node->data.layer.width,
@@ -230,7 +296,7 @@ backward(network* const net, layer* const node){
 	pool_empty(&net->temp);
 	double* dadz = pool_request(&net->temp, sizeof(double)*node->data.layer.width);
 	double* dcda = node->data.layer.activation_gradients;
-	node->data.layer.derivative(
+	activation_partials[node->data.layer.derivative](
 		dadz,
 		node->data.layer.output,
 		node->data.layer.width,
@@ -368,14 +434,15 @@ network_train(network* const net, double** data, uint64_t data_size, double** ex
 			memcpy(net->input->data.input.output, data[i], net->input->data.input.width);
 			forward(net->input, pass);
 			pass += 1;
-			net->loss(
+			double loss = losses[net->loss](
 				net->loss_output,
 				net->output->data.layer.activated,
 				expected[i],
 				net->output->data.layer.width,
 				net->loss_parameter_a
 			);
-			net->derivative(
+			//TODO write loss to file
+			loss_partials[net->derivative](
 				net->output->data.layer.activation_gradients,
 				net->output->data.layer.activated,
 				expected[i],
@@ -405,12 +472,12 @@ init_params(network* const net, layer* const node, uint64_t pass_index){
 	for (uint64_t i = 0;i<node->prev_count;++i){
 		sum += node->prev[i]->data.layer.width;
 	}
-	net->weight(
+	weight_inits[net->weight](
 		node->data.layer.weights,
 		sum, node->data.layer.width,
 		net->weight_parameter_a, net->weight_parameter_b
 	);
-	net->bias(
+	bias_inits[net->bias](
 		node->data.layer.bias,
 		node->data.layer.width,
 		net->bias_parameter_a, net->bias_parameter_b
@@ -877,6 +944,21 @@ activation_selu(double* const buffer, const double* const output, uint64_t size,
 		}
 		buffer[i] = SELU_LAMBDA*SELU_ALPHA*(expf(x)-1);
 	}
+}
+
+void
+write_network(network* const net, const char* filename){
+	FILE* outfile = fopen(filename, "wb");
+	assert(outfile != NULL);
+	// TODO fwrite(src, size, count, outfile);
+}
+
+network
+load_network(const char* filename){
+	FILE* infile = fopen(filename, "rb");
+	assert(infile != NULL);
+	// TODO fread(dest, size, count, infile);
+	return (network){};
 }
 
 int

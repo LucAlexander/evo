@@ -15,6 +15,69 @@ typedef void (*loss_derivative)(double* const, const double* const, const double
 typedef void (*bias_init)(double* const, uint64_t, double, double);
 typedef void (*weight_init)(double** const, uint64_t, uint64_t, double, double);
 
+typedef enum LOSS_FUNC {
+	LOSS_MSE,
+	LOSS_MAE,
+	LOSS_MAPE,
+	LOSS_HUBER,
+	LOSS_HUBER_MODIFIED,
+	LOSS_CROSS_ENTROPY,
+	LOSS_HINGE
+} LOSS_FUNC;
+
+typedef enum ACTIVATION_FUNC {
+	ACTIVATION_SIGMOID,
+	ACTIVATION_RELU,
+	ACTIVATION_TANH,
+	ACTIVATION_BINARY_STEP,
+	ACTIVATION_LINEAR,
+	ACTIVATION_RELU_LEAKY,
+	ACTIVATION_RELU_PARAMETRIC,
+	ACTIVATION_ELU,
+	ACTIVATION_SOFTMAX,
+	ACTIVATION_SWISH,
+	ACTIVATION_GELU,
+	ACTIVATION_SELU,
+} ACTIVATION_FUNC;
+
+typedef enum BIAS_FUNC {
+	BIAS_INITIALIZATION_ZERO,
+	BIAS_INITIALIZATION_CONST_FLAT,
+	BIAS_INITIALIZATION_CONST_UNEVEN,
+} BIAS_FUNC;
+
+typedef enum WEIGHT_FUNC {
+	WEIGHT_INITIALIZATION_XAVIER,
+	WEIGHT_INITIALIZATION_HE,
+	WEIGHT_INITIALIZATION_LECUN,
+	WEIGHT_INITIALIZATION_UNIFORM,
+	WEIGHT_INITIALIZATION_NORMAL,
+} WEIGHT_FUNC;
+
+typedef enum LOSS_PARTIAL_FUNC {
+	LOSS_MSE_PARTIAL,
+	LOSS_MAE_PARTIAL,
+	LOSS_MAPE_PARTIAL,
+	LOSS_HUBER_PARTIAL,
+	LOSS_HUBER_MODIFIED_PARTIAL,
+	LOSS_CROSS_ENTROPY_PARTIAL,
+	LOSS_HINGE_PARTIAL,
+} LOSS_PARTIAL_FUNC;
+
+typedef enum ACTIVATION_PARTIAL_FUNC {
+	ACTIVATION_SIGMOID_PARTIAL,
+	ACTIVATION_RELU_PARTIAL,
+	ACTIVATION_TANH_PARTIAL,
+	ACTIVATION_LINEAR_PARTIAL,
+	ACTIVATION_RELU_LEAKY_PARTIAL,
+	ACTIVATION_RELU_PARAMETRIC_PARTIAL,
+	ACTIVATION_ELU_PARTIAL,
+	ACTIVATION_SOFTMAX_PARTIAL,
+	ACTIVATION_SWISH_PARTIAL,
+	ACTIVATION_GELU_PARTIAL,
+	ACTIVATION_SELU_PARTIAL
+} ACTIVATION_PARTIAL_FUNC;
+
 typedef struct layer layer;
 typedef struct layer {
 	layer** prev;
@@ -29,11 +92,11 @@ typedef struct layer {
 			uint64_t width;
 			double* output;
 			double* activated;
-			// width x number of input weights, in same order as layer** prev
+			// width * number of input weights, in same order as layer** prev
 			double** weights;
 			double* bias;
-			activation_function activation;
-			activation_function derivative;
+			ACTIVATION_FUNC activation;
+			ACTIVATION_PARTIAL_FUNC derivative;
 			double** weight_gradients;
 			double* bias_gradients;
 			double* activation_gradients;
@@ -57,11 +120,11 @@ typedef struct network {
 	pool temp;
 	layer* input;
 	layer* output;
-	loss_function loss;
-	loss_derivative derivative;
+	LOSS_FUNC loss;
+	LOSS_PARTIAL_FUNC derivative;
 	double* loss_output;
-	bias_init bias;
-	weight_init weight;
+	BIAS_FUNC bias;
+	WEIGHT_FUNC weight;
 	uint64_t batch_size;
 	double learning_rate;
 	double loss_parameter_a;
@@ -71,9 +134,9 @@ typedef struct network {
 	double bias_parameter_b;
 } network;
 
-network network_init(pool* const mem, uint64_t input, uint64_t output, weight_init w, bias_init b, uint64_t batch_size, double learning_rate, loss_function l, loss_derivative ld);
+network network_init(pool* const mem, layer* const input, layer* const output, WEIGHT_FUNC w, BIAS_FUNC b, double weight_a, double weight_b, double bias_a, double bias_b, uint64_t batch_size, double learning_rate, LOSS_FUNC l);
 layer* input_init(pool* const mem, uint64_t width);
-layer* layer_init(pool* const mem, uint64_t width);
+layer* layer_init(pool* const mem, uint64_t width, ACTIVATION_FUNC activation);
 void layer_link(pool* const mem, layer* const a, layer* const b);
 void layer_unlink(layer* const a, layer* const b);
 void layer_insert(pool* const mem, layer* const a, layer* const b, layer* const c);
@@ -140,5 +203,8 @@ void activation_softmax_partial(double* const, const double* const, uint64_t, do
 void activation_swish_partial(double* const, const double* const, uint64_t, double);
 void activation_gelu_partial(double* const, const double* const, uint64_t, double);
 void activation_selu_partial(double* const, const double* const, uint64_t, double);
+
+void write_network(network* const net, const char* filename);
+network load_network(const char* filename);
 
 #endif
