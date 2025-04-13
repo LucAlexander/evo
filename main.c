@@ -80,6 +80,7 @@ layer_init(pool* const mem, uint64_t width){
 	node->next_count = 0;
 	node->next_capacity = 2;
 	node->simulated = 0;
+	node->branched = 0;
 	node->pass_index = 0;
 	return node;
 }
@@ -188,6 +189,7 @@ forward(layer* const node, uint64_t pass_index){
 		}
 		return;
 	}
+	node->branched = 0;
 	if (node->pass_index >= pass_index){
 		return;
 	}
@@ -220,11 +222,8 @@ forward(layer* const node, uint64_t pass_index){
 	}
 }
 
-void backward(network* const net, layer* const node, uint64_t pass_index){
-	if (node->pass_index >= pass_index){
-		return;
-	}
-	node->pass_index += 1;
+void
+backward(network* const net, layer* const node){
 	if (node->tag == INPUT_NODE){
 		return;
 	}
@@ -244,9 +243,6 @@ void backward(network* const net, layer* const node, uint64_t pass_index){
 		uint64_t weight_index = 0;
 		for (uint64_t p = 0;p<node->prev_count;++p){
 			layer* prev = node->prev[p];
-			if (prev->simulated == 0){
-				weight_index += prev->data.layer.width;
-			}
 			for (uint64_t k = 0;k<prev->data.layer.width;++k){
 				double dzdw = prev->data.layer.activated[k];
 				node->data.layer.weight_gradients[i][weight_index] += dzdw * dadz[i] * dcda[i];
@@ -272,8 +268,21 @@ void backward(network* const net, layer* const node, uint64_t pass_index){
 			break;
 		}
 	}
+	if (node->prev_count > 1){
+		if (node->branched == 1){
+			/* NOTE 
+			 * This hinges on the first inward node linked
+			 * to any given node being the nonlooping path to the input node.
+			 * If we get any infinite loops we know this is probably the culprit,
+			 * or a missed pass index check.
+			 * */
+			backward(net, node->prev[0]);
+			return;
+		}
+		node->branched = 1;
+	}
 	for (uint64_t i = 0;i<node->prev_count;++i){
-		backward(net, node->prev[i], pass_index);
+		backward(net, node->prev[i]);
 	}
 }
 
@@ -284,7 +293,9 @@ apply_gradients(network* const net, layer* const node, uint64_t pass_index){
 	}
 	node->pass_index += 1;
 	if (node->tag == INPUT_NODE){
-		return;
+		for (uint64_t i = 0;i<node->next_count;++i){
+			apply_gradients(net, node->next[i], pass_index);
+		}
 	}
 	for (uint64_t i = 0;i<node->data.layer.width;++i){
 		double average = (node->data.layer.bias_gradients[i]/net->batch_size);
@@ -319,6 +330,9 @@ zero_gradients(layer* const node, uint64_t pass_index){
 	}
 	node->pass_index += 1;
 	if (node->tag == INPUT_NODE){
+		for (uint64_t i = 0;i<node->next_count;++i){
+			zero_gradients(node->next[i], pass_index);
+		}
 		return;
 	}
 	for (uint64_t i = 0;i<node->data.layer.width;++i){
@@ -343,7 +357,8 @@ zero_gradients(layer* const node, uint64_t pass_index){
 	}
 }
 
-void network_train(network* const net, double** data, uint64_t data_size, double** expected){
+void
+network_train(network* const net, double** data, uint64_t data_size, double** expected){
 	assert(data_size % net->batch_size == 0);
 	uint64_t pass = net->input->pass_index+1;
 	zero_gradients(net->input, pass);
@@ -367,45 +382,82 @@ void network_train(network* const net, double** data, uint64_t data_size, double
 				net->output->data.layer.width,
 				net->loss_parameter_a
 			);
-			backward(net, net->output, pass);
-			pass += 1;
+			backward(net, net->output);
 		}
-		apply_gradients(net, net->output, pass);
+		apply_gradients(net, net->input, pass);
 		pass += 1;
 	}
 }
 
-void set_seed(time_t seed){
+void
+init_params(network* const net, layer* const node, uint64_t pass_index){
+	if (node->pass_index >= pass_index){
+		return;
+	}
+	node->pass_index += 1;
+	if (node->tag == INPUT_NODE){
+		for (uint64_t i = 0;i<node->next_count;++i){
+			init_params(net, node->next[i], pass_index);
+		}
+		return;
+	}
+	uint64_t sum = 0;
+	for (uint64_t i = 0;i<node->prev_count;++i){
+		sum += node->prev[i]->data.layer.width;
+	}
+	net->weight(
+		node->data.layer.weights,
+		sum, node->data.layer.width,
+		net->weight_parameter_a, net->weight_parameter_b
+	);
+	net->bias(
+		node->data.layer.bias,
+		node->data.layer.width,
+		net->bias_parameter_a, net->bias_parameter_b
+	);
+	for (uint64_t i = 0;i<node->next_count;++i){
+		init_params(net, node->next[i], pass_index);
+	}
+}
+
+void
+set_seed(time_t seed){
 	srandom(seed);
 }
 
-double uniform_distribution(double min, double max){
+double
+uniform_distribution(double min, double max){
 	double n = ((double)random())/RAND_MAX;
 	return (n*(max-min))+min;
 }
 
-double normal_distribution(double mean, double std){
+double
+normal_distribution(double mean, double std){
 	double u1 = uniform_distribution(0, 1);
 	double u2 = uniform_distribution(0, 1);
 	double z0 = sqrtf(-2.8*logf(u1))*cos(2.0*M_PI*u2);
 	return mean+std*z0;
 }
 
-void bias_initialization_zero(double* const buffer, uint64_t size, double a, double b){
+void
+bias_initialization_zero(double* const buffer, uint64_t size, double a, double b){
 	memset(buffer, 0, size*sizeof(double));
 }
 
-void bias_initialization_const_flat(double* const buffer, uint64_t size, double a, double b){
+void
+bias_initialization_const_flat(double* const buffer, uint64_t size, double a, double b){
 	memset(buffer, a, size*sizeof(double));
 }
 
-void bias_initialization_const_uneven(double* const buffer, uint64_t size, double a, double b){
+void
+bias_initialization_const_uneven(double* const buffer, uint64_t size, double a, double b){
 	for (uint64_t i = 0;i<size;++i){
 		buffer[i] = normal_distribution(a, b);
 	}
 }
 
-void weight_initialization_xavier(double** const out, uint64_t in_size, uint64_t out_size, double aa, double b){
+void
+weight_initialization_xavier(double** const out, uint64_t in_size, uint64_t out_size, double aa, double b){
 	float a = sqrtf(1/(in_size+out_size));
 	for (uint64_t i = 0;i<out_size;++i){
 		for (uint64_t k = 0;k<in_size;++i){
@@ -414,7 +466,8 @@ void weight_initialization_xavier(double** const out, uint64_t in_size, uint64_t
 	}
 }
 
-void weight_initialization_he(double** const out, uint64_t in_size, uint64_t out_size, double aa, double b){
+void
+weight_initialization_he(double** const out, uint64_t in_size, uint64_t out_size, double aa, double b){
 	float a = sqrtf(6/in_size);
 	for (uint64_t i = 0;i<out_size;++i){
 		for (uint64_t k = 0;k<in_size;++i){
@@ -423,7 +476,8 @@ void weight_initialization_he(double** const out, uint64_t in_size, uint64_t out
 	}
 }
 
-void weight_initialization_lecun(double** const out, uint64_t in_size, uint64_t out_size, double a, double b){
+void
+weight_initialization_lecun(double** const out, uint64_t in_size, uint64_t out_size, double a, double b){
 	float std = sqrtf(1/in_size);
 	for (uint64_t i = 0;i<out_size;++i){
 		for (uint64_t k = 0;k<in_size;++i){
@@ -432,7 +486,8 @@ void weight_initialization_lecun(double** const out, uint64_t in_size, uint64_t 
 	}
 }
 
-void weight_initialization_uniform(double** const out, uint64_t in_size, uint64_t out_size, double a, double b){
+void
+weight_initialization_uniform(double** const out, uint64_t in_size, uint64_t out_size, double a, double b){
 	for (uint64_t i = 0;i<out_size;++i){
 		for (uint64_t k = 0;k<in_size;++i){
 			out[i][k] = uniform_distribution(a, b);
@@ -440,7 +495,8 @@ void weight_initialization_uniform(double** const out, uint64_t in_size, uint64_
 	}
 }
 
-void weight_initialization_normal(double** const out, uint64_t in_size, uint64_t out_size, double a, double b){
+void
+weight_initialization_normal(double** const out, uint64_t in_size, uint64_t out_size, double a, double b){
 	for (uint64_t i = 0;i<out_size;++i){
 		for (uint64_t k = 0;k<in_size;++i){
 			out[i][k] = normal_distribution(a, b);
@@ -448,27 +504,31 @@ void weight_initialization_normal(double** const out, uint64_t in_size, uint64_t
 	}
 }
 
-void loss_mse_partial(double* const output, const double* const result, const double* const expected, uint64_t size, double a){
+void
+loss_mse_partial(double* const output, const double* const result, const double* const expected, uint64_t size, double a){
 	for (uint64_t i = 0;i<size;++i){
 		output[i] = 2*(result[i]-expected[i]);
 	}
 }
 
-void loss_mae_partial(double* const output, const double* const result, const double* const expected, uint64_t size, double a){
+void
+loss_mae_partial(double* const output, const double* const result, const double* const expected, uint64_t size, double a){
 	for (uint64_t i = 0;i<size;++i){
 		double term = result[i]-expected[i];
 		output[i] = term/fabsf(term);
 	}
 }
 
-void loss_mape_partial(double* const output, const double* const result, const double* const expected, uint64_t size, double a){
+void
+loss_mape_partial(double* const output, const double* const result, const double* const expected, uint64_t size, double a){
 	for (uint64_t i = 0;i<size;++i){
 		double term = expected[i]-result[i];
 		output[i] = (1/powf(expected[i], 2))*term/fabsf(term);
 	}
 }
 
-void loss_huber_partial(double* const output, const double* const result, const double* const expected, uint64_t size, double a){
+void
+loss_huber_partial(double* const output, const double* const result, const double* const expected, uint64_t size, double a){
 	for (uint64_t i = 0;i<size;++i){
 		double term = expected[i]-result[i];
 		if (term <= a){
@@ -479,7 +539,8 @@ void loss_huber_partial(double* const output, const double* const result, const 
 	}
 }
 
-void loss_huber_modified_partial(double* const output, const double* const result, const double* const expected, uint64_t size, double a){
+void
+loss_huber_modified_partial(double* const output, const double* const result, const double* const expected, uint64_t size, double a){
 	double coef = 1/a;
 	for (uint64_t i = 0;i<size;++i){
 		float term = result[i]-expected[i];
@@ -491,13 +552,15 @@ void loss_huber_modified_partial(double* const output, const double* const resul
 	}
 }
 
-void loss_cross_entropy_partial(double* const output, const double* const result, const double* const expected, uint64_t size, double a){
+void
+loss_cross_entropy_partial(double* const output, const double* const result, const double* const expected, uint64_t size, double a){
 	for (uint64_t i = 0;i<size;++i){
 		output[i] = (-(expected[i]/result[i]))+((1-expected[i])/(1-result[i]));
 	}
 }
 
-void loss_hinge_partial(double* const output, const double* const result, const double* const expected, uint64_t size, double a){
+void
+loss_hinge_partial(double* const output, const double* const result, const double* const expected, uint64_t size, double a){
 	for (uint64_t i = 0;i<size;++i){
 		if (expected[i]*result[i] >= 1){
 			output[i] = 0;
@@ -506,30 +569,35 @@ void loss_hinge_partial(double* const output, const double* const result, const 
 	}
 }
 
-void activation_sigmoid_partial(double* const output, const double* const buffer, uint64_t size, double a){
+void
+activation_sigmoid_partial(double* const output, const double* const buffer, uint64_t size, double a){
 	for (uint64_t i = 0;i<size;++i){
 		float fx = 1/(1+expf(-buffer[i]));
 		output[i] = fx*(1-fx);
 	}
 }
 
-void activation_relu_partial(double* const output, const double* const buffer, uint64_t size, double a){
+void
+activation_relu_partial(double* const output, const double* const buffer, uint64_t size, double a){
 	for (uint64_t i = 0;i<size;++i){
 		output[i] = (buffer[i] > 0);
 	}
 }
 
-void activation_tanh_partial(double* const output, const double* const buffer, uint64_t size, double a){
+void
+activation_tanh_partial(double* const output, const double* const buffer, uint64_t size, double a){
 	for (uint64_t i = 0;i<size;++i){
 		output[i] = 1-powf(tanh(buffer[i]), 2);
 	}
 }
 
-void activation_linear_partial(double* const output, const double* const buffer, uint64_t size, double a){
+void
+activation_linear_partial(double* const output, const double* const buffer, uint64_t size, double a){
 	memset(output, 1, size*sizeof(float));
 }
 
-void activation_relu_leaky_partial(double* const output, const double* const buffer, uint64_t size, double a){
+void
+activation_relu_leaky_partial(double* const output, const double* const buffer, uint64_t size, double a){
 	for (uint64_t i = 0;i<size;++i){
 		if (buffer[i] > 0){
 			output[i] = 1;
@@ -539,7 +607,8 @@ void activation_relu_leaky_partial(double* const output, const double* const buf
 	}
 }
 
-void activation_relu_parametric_partial(double* const output, const double* const buffer, uint64_t size, double a){
+void
+activation_relu_parametric_partial(double* const output, const double* const buffer, uint64_t size, double a){
 	for (uint64_t i = 0;i<size;++i){
 		if (buffer[i] > 0){
 			output[i] = 1;
@@ -549,7 +618,8 @@ void activation_relu_parametric_partial(double* const output, const double* cons
 	}
 }
 
-void activation_elu_partial(double* const output, const double* const buffer, uint64_t size, double a){
+void
+activation_elu_partial(double* const output, const double* const buffer, uint64_t size, double a){
 	for (uint64_t i = 0;i<size;++i){
 		if (buffer[i] > 0){
 			output[i] = 1;
@@ -559,7 +629,8 @@ void activation_elu_partial(double* const output, const double* const buffer, ui
 	}
 }
 
-void activation_softmax_partial(double* const output, const double* const buffer, uint64_t size, double a){
+void
+activation_softmax_partial(double* const output, const double* const buffer, uint64_t size, double a){
 	float sum = 0.0f;
 	float* softmax_values = malloc(sizeof(float)*size);
 	for (uint64_t i = 0;i<size;++i){
@@ -580,14 +651,16 @@ void activation_softmax_partial(double* const output, const double* const buffer
 	free(softmax_values);
 }
 
-void activation_swish_partial(double* const output, const double* const buffer, uint64_t size, double a){
+void
+activation_swish_partial(double* const output, const double* const buffer, uint64_t size, double a){
 	for (uint64_t i = 0;i<size;++i){
 		float fx = 1/(1+expf(-buffer[i]*a));
 		output[i] = fx+a*buffer[i]*fx*(1-fx);
 	}
 }
 
-void activation_gelu_partial(double* const output, const double* const buffer, uint64_t size, double a){
+void
+activation_gelu_partial(double* const output, const double* const buffer, uint64_t size, double a){
 	float s2op = sqrt(2/M_PI);
 	for (uint64_t i = 0;i<size;++i){
 		float x = buffer[i];
@@ -596,7 +669,8 @@ void activation_gelu_partial(double* const output, const double* const buffer, u
 	}
 }
 
-void activation_selu_partial(double* const output, const double* const buffer, uint64_t size, double a){
+void
+activation_selu_partial(double* const output, const double* const buffer, uint64_t size, double a){
 	for (uint64_t i = 0;i<size;++i){
 		double x = output[i];
 		if (x > 0){
@@ -607,7 +681,8 @@ void activation_selu_partial(double* const output, const double* const buffer, u
 	}
 }
 
-double loss_mse(double* const buffer, const double* const result, const double* const expected, uint64_t size, double a){
+double
+loss_mse(double* const buffer, const double* const result, const double* const expected, uint64_t size, double a){
 	float sum = 0;
 	for (uint64_t i = 0;i<size;++i){
 		float loss = expected[i]-result[i];
@@ -617,7 +692,8 @@ double loss_mse(double* const buffer, const double* const result, const double* 
 	return (sum)/(size);
 }
 
-double loss_mae(double* const buffer, const double* const result, const double* const expected, uint64_t size, double a){
+double
+loss_mae(double* const buffer, const double* const result, const double* const expected, uint64_t size, double a){
 	float sum = 0;
 	for (uint64_t i = 0;i<size;++i){
 		float loss = expected[i]-result[i];
@@ -627,7 +703,8 @@ double loss_mae(double* const buffer, const double* const result, const double* 
 	return sum/(size);
 }
 
-double loss_mape(double* const buffer, const double* const result, const double* const expected, uint64_t size, double a){
+double
+loss_mape(double* const buffer, const double* const result, const double* const expected, uint64_t size, double a){
 	float sum = 0;
 	for (uint64_t i = 0;i<size;++i){
 		float expect = expected[i];
@@ -638,7 +715,8 @@ double loss_mape(double* const buffer, const double* const result, const double*
 	return sum/(size);
 }
 
-double loss_huber(double* const buffer, const double* const result, const double* const expected, uint64_t size, double a){
+double
+loss_huber(double* const buffer, const double* const result, const double* const expected, uint64_t size, double a){
 	float sum = 0;
 	float hpsq = a*a*0.5;
 	for (uint64_t i = 0;i<size;++i){
@@ -655,7 +733,8 @@ double loss_huber(double* const buffer, const double* const result, const double
 	return sum;
 }
 
-double loss_huber_modified(double* const buffer, const double* const result, const double* const expected, uint64_t size, double a){
+double
+loss_huber_modified(double* const buffer, const double* const result, const double* const expected, uint64_t size, double a){
 	float sum = 0;
 	for (uint64_t i = 0;i<size;++i){
 		float expect = expected[i];
@@ -672,7 +751,8 @@ double loss_huber_modified(double* const buffer, const double* const result, con
 	return sum;
 }
 
-double loss_cross_entropy(double* const buffer, const double* const result, const double* const expected, uint64_t size, double a){
+double
+loss_cross_entropy(double* const buffer, const double* const result, const double* const expected, uint64_t size, double a){
 	float sum = 0;
 	for (uint64_t i = 0;i<size;++i){
 		float expect = expected[i];
@@ -683,7 +763,8 @@ double loss_cross_entropy(double* const buffer, const double* const result, cons
 	return -sum;
 }
 
-double loss_hinge(double* const buffer, const double* const result, const double* const expected, uint64_t size, double a){
+double
+loss_hinge(double* const buffer, const double* const result, const double* const expected, uint64_t size, double a){
 	float sum = 0;
 	for (uint64_t i = 0;i<size;++i){
 		float expect = expected[i];
@@ -694,35 +775,41 @@ double loss_hinge(double* const buffer, const double* const result, const double
 	return sum;
 }
 
-void activation_sigmoid(double* const buffer, const double* const output, uint64_t size, double a){
+void
+activation_sigmoid(double* const buffer, const double* const output, uint64_t size, double a){
 	for (uint64_t i = 0;i<size;++i){
 		buffer[i] = 1/(1+expf(-output[i]));
 	}
 }
 
-void activation_relu(double* const buffer, const double* const output, uint64_t size, double a){
+void
+activation_relu(double* const buffer, const double* const output, uint64_t size, double a){
 	for (uint64_t i = 0;i<size;++i){
 		buffer[i] = fmax(0,output[i]);
 	}
 }
 
-void activation_tanh(double* const buffer, const double* const output, uint64_t size, double a){
+void
+activation_tanh(double* const buffer, const double* const output, uint64_t size, double a){
 	for (uint64_t i = 0;i<size;++i){
 		buffer[i] = tanh(output[i]);
 	}
 }
 
-void activation_binary_step(double* const buffer, const double* const output, uint64_t size, double a){
+void
+activation_binary_step(double* const buffer, const double* const output, uint64_t size, double a){
 	for (uint64_t i = 0;i<size;++i){
 		buffer[i] = output[i] >= 0;
 	}
 }
 
-void activation_linear(double* const buffer, const double* const output, uint64_t size, double a){
+void
+activation_linear(double* const buffer, const double* const output, uint64_t size, double a){
 	memcpy(buffer, output, size*sizeof(double));
 }
 
-void activation_relu_leaky(double* const buffer, const double* const output, uint64_t size, double a){
+void
+activation_relu_leaky(double* const buffer, const double* const output, uint64_t size, double a){
 	float x;
 	for (uint64_t i = 0;i<size;++i){
 		x = output[i];
@@ -730,7 +817,8 @@ void activation_relu_leaky(double* const buffer, const double* const output, uin
 	}
 }
 
-void activation_relu_parametric(double* const buffer, const double* const output, uint64_t size, double a){
+void
+activation_relu_parametric(double* const buffer, const double* const output, uint64_t size, double a){
 	float x;
 	for (uint64_t i = 0;i<size;++i){
 		x = output[i];
@@ -738,7 +826,8 @@ void activation_relu_parametric(double* const buffer, const double* const output
 	}
 }
 
-void activation_elu(double* const buffer, const double* const output, uint64_t size, double a){
+void
+activation_elu(double* const buffer, const double* const output, uint64_t size, double a){
 	float x;
 	for (uint64_t i = 0;i<size;++i){
 		x = output[i];
@@ -748,7 +837,8 @@ void activation_elu(double* const buffer, const double* const output, uint64_t s
 	}
 }
 
-void activation_softmax(double* const buffer, const double* const output, uint64_t size, double a){
+void
+activation_softmax(double* const buffer, const double* const output, uint64_t size, double a){
 	float denom = 0;
 	for (uint64_t i = 0;i<size;++i){
 		denom += expf(output[i]);
@@ -758,7 +848,8 @@ void activation_softmax(double* const buffer, const double* const output, uint64
 	}
 }
 
-void activation_swish(double* const buffer, const double* const output, uint64_t size, double a){
+void
+activation_swish(double* const buffer, const double* const output, uint64_t size, double a){
 	float x;
 	for (uint64_t i = 0;i<size;++i){
 		x = output[i];
@@ -766,7 +857,8 @@ void activation_swish(double* const buffer, const double* const output, uint64_t
 	}
 }
 
-void activation_gelu(double* const buffer, const double* const output, uint64_t size, double a){
+void
+activation_gelu(double* const buffer, const double* const output, uint64_t size, double a){
 	float x;
 	const float s2p  = sqrtf(2/M_PI);
 	for (uint64_t i = 0;i<size;++i){
@@ -775,7 +867,8 @@ void activation_gelu(double* const buffer, const double* const output, uint64_t 
 	}
 }
 
-void activation_selu(double* const buffer, const double* const output, uint64_t size, double a){
+void
+activation_selu(double* const buffer, const double* const output, uint64_t size, double a){
 	for (uint64_t i = 0;i<size;++i){
 		double x = output[i];
 		if (x > 0){
@@ -786,6 +879,7 @@ void activation_selu(double* const buffer, const double* const output, uint64_t 
 	}
 }
 
-int main(int argc, char** argv){
+int
+main(int argc, char** argv){
 	return 0;
 }

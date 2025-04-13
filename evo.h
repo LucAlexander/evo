@@ -49,6 +49,7 @@ typedef struct layer {
 		INPUT_NODE,
 	} tag;
 	uint8_t simulated;
+	uint8_t branched;
 } layer;
 
 typedef struct network {
@@ -79,10 +80,11 @@ void layer_insert(pool* const mem, layer* const a, layer* const b, layer* const 
 void reset_simulation_flags(layer* const node);
 void allocate_weights(pool* const mem, layer* const node, uint64_t pass_index);
 void forward(layer* const node, uint64_t pass_index);
-void backward(network* const net, layer* const node, uint64_t pass_index);
+void backward(network* const net, layer* const node);
 void apply_gradients(network* const net, layer* const node, uint64_t pass_index);
 void zero_gradients(layer* const node, uint64_t pass_index);
 void network_train(network* const net, double** data, uint64_t data_size, double** expected);
+void init_params(network* const net, layer* const node, uint64_t pass_index);
 
 void set_seed(time_t seed);
 double uniform_distribution(double min, double max);
