@@ -7,11 +7,9 @@
 #include <stdlib.h>
 
 /* TODO
- * loading
  * multithreading
  * SIMD
  * parser / build step
- * running trained model
  */
 
 static activation_function activations[] = {
@@ -475,7 +473,7 @@ network_train(network* const net, double** data, uint64_t data_size, double** ex
 	pass += 1;
 	for (uint64_t i = 0;i<data_size;++i){
 		for (uint64_t k = i;i<k+net->batch_size;++i){
-			memcpy(net->input->data.input.output, data[i], net->input->data.input.width);
+			memcpy(net->input->data.input.output, data[i], net->input->data.input.width*sizeof(double));
 			forward(net, net->input, pass);
 			pass += 1;
 			double loss = losses[net->loss](
@@ -1113,6 +1111,70 @@ load_network(pool* const mem, const char* filename){
 	}
 	allocate_weights(&net, mem, NULL, net.input, net.input->pass_index+1);
 	return net;
+}
+
+prediction
+predict(network* const net, double* input, uint64_t len){
+	assert(len == net->input->data.input.width);
+	memcpy(net->input->data.input.output, input, len*sizeof(double));
+	forward(net, net->input, net->input->pass_index+1);
+	net->input->pass_index += 1;
+	prediction pred = {
+		.class = 0,
+		.probability = 0
+	};
+	for (uint64_t i = 0;i<net->output->data.layer.width;++i){
+		if (net->output->data.layer.activated[i] > pred.probability){
+			pred.class = i;
+			pred.probability = net->output->data.layer.activated[i];
+		}
+	}
+	return pred;
+}
+
+
+prediction_vector
+predict_vector(network* const net, pool* const mem, double** input, uint64_t vector_len, uint64_t len){
+	assert(len == net->input->data.input.width);
+	assert(vector_len == net->batch_size);
+	prediction_vector pred = {
+		.class = pool_request(mem, sizeof(uint64_t)*vector_len),
+		.probability= pool_request(mem, sizeof(double)*vector_len),
+		.len = vector_len
+	};
+	for (uint64_t v = 0;v<vector_len;++v){
+		memcpy(net->input->data.input.output, input[v], len*sizeof(double));
+		forward(net, net->input, net->input->pass_index+1);
+		net->input->pass_index += 1;
+		uint64_t class = 0;
+		double prob = 0;
+		for (uint64_t i = 0;i<net->output->data.layer.width;++i){
+			if (net->output->data.layer.activated[i] > prob){
+				class = i;
+				prob = net->output->data.layer.activated[i];
+			}
+		}
+		pred.class[v] = class;
+		pred.probability[v] = prob;
+	}
+	return pred;
+}
+
+prediction_vector
+predict_vector_batched(network* const net, pool* const mem, double*** input, uint64_t sample_count, uint64_t vector_len, uint64_t len){
+	prediction_vector pred = {
+		.class = pool_request(mem, sizeof(uint64_t)*sample_count),
+		.probability= pool_request(mem, sizeof(double)*sample_count),
+		.len = sample_count 
+	};
+	pool_save(mem);
+	for (uint64_t i = 0;i<sample_count;++i){
+		prediction_vector sample = predict_vector(net, mem, input[i], vector_len, len);
+		pred.class[i] = sample.class[vector_len-1];
+		pred.probability[i] = sample.probability[vector_len-1];
+		pool_load(mem);
+	}
+	return pred;
 }
 
 int

@@ -215,4 +215,19 @@ void write_network(network* const net, const char* filename);
 void load_nodes(network* const net, pool* const node, FILE* infile);
 network load_network(pool* const mem, const char* filename);
 
+typedef struct prediction {
+	uint64_t class;
+	double probability;
+} prediction;
+
+typedef struct prediction_vector {
+	uint64_t* class;
+	double* probability;
+	uint64_t len;
+} prediction_vector;
+
+prediction predict(network* const net, double* input, uint64_t len);
+prediction_vector predict_vector(network* const net, pool* const mem, double** input, uint64_t vector_len, uint64_t len);
+prediction_vector predict_vector_batched(network* const net, pool* const mem, double*** input, uint64_t sample_count, uint64_t vector_len, uint64_t len);
+
 #endif
