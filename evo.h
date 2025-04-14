@@ -140,7 +140,8 @@ typedef struct network {
 } network;
 
 network network_init(pool* const mem, layer* const input, layer* const output, WEIGHT_FUNC w, BIAS_FUNC b, double weight_a, double weight_b, double bias_a, double bias_b, uint64_t batch_size, double learning_rate, LOSS_FUNC l);
-void network_register_layer(network* const net, layer* const node);
+uint64_t network_register_layer(network* const net, layer* const node);
+void network_build(network* const net);
 layer* input_init(pool* const mem, uint64_t width);
 layer* layer_init(pool* const mem, uint64_t width, ACTIVATION_FUNC activation, uint64_t parameter_a);
 void layer_link(network* const net, pool* const mem, uint64_t a, uint64_t b);

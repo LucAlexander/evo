@@ -9,7 +9,7 @@
 /* TODO
  * multithreading
  * SIMD
- * parser / build step
+ * parser
  */
 
 static activation_function activations[] = {
@@ -108,7 +108,7 @@ network_init(
 	return net;
 }
 
-void
+uint64_t
 network_register_layer(network* const net, layer* const node){
 	if (net->node_count >= net->node_capacity){
 		layer** new = pool_request(net->mem, sizeof(layer*)*net->node_capacity*2);
@@ -120,6 +120,14 @@ network_register_layer(network* const net, layer* const node){
 	}
 	net->nodes[net->node_count] = node;
 	net->node_count += 1;
+	return net->node_count - 1;
+}
+
+void
+network_build(network* const net){
+	sort_connections(net, NULL, net->input, net->input->pass_index+1);
+	allocate_weights(net, net->mem, net->input, net->input->pass_index+1);
+	reset_simulation_flags(net, net->input);
 }
 
 layer*
@@ -1195,5 +1203,35 @@ predict_vector_batched(network* const net, pool* const mem, double*** input, uin
 
 int
 main(int argc, char** argv){
+	pool mem = pool_alloc(TEMP_POOL_SIZE, POOL_STATIC);
+
+
+	layer* input = input_init(&mem, 32);
+	layer* output = layer_init(&mem, 2, ACTIVATION_SIGMOID, 0);
+
+
+	network net = network_init(
+		&mem,
+		input, output,
+		WEIGHT_INITIALIZATION_NORMAL,
+		BIAS_INITIALIZATION_ZERO,
+		1, 2,
+		0, 0,
+		32,
+		0.000001,
+		LOSS_MSE
+	);
+
+
+	uint64_t input_id = network_register_layer(&net, input);
+	uint64_t output_id = network_register_layer(&net, output);
+	layer_link(&net, &mem, input_id, output_id);
+
+
+	network_build(&net);
+
+	printf("network built\n");
+
+	pool_dealloc(&mem);
 	return 0;
 }
