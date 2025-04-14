@@ -990,19 +990,14 @@ activation_selu(double* const buffer, const double* const output, uint64_t size,
 	}
 }
 
-//TODO fix
 void
-write_graph(layer* const node, FILE* outfile, uint64_t pass_index){
-	if (node->pass_index >= pass_index){
-		return;
-	}
-	node->pass_index += 1;
-	fwrite(&node->index, sizeof(uint64_t), 1, outfile);
+write_node(network* const net, layer* const node, FILE* outfile){
+	fwrite(&node->tag, sizeof(uint8_t), 1, outfile);
 	fwrite(&node->data.layer.width, sizeof(uint64_t), 1, outfile);
 	if (node->tag == LAYER_NODE){
 		uint64_t sum = 0;
 		for (uint64_t i = 0;i<node->data.layer.prev_count;++i){
-			sum += node->prev[i].data.layer.width;
+			sum += net->nodes[node->prev[i]]->data.layer.width;
 		}
 		for (uint64_t i = 0;i<node->data.layer.width;++i){
 			fwrite(&node->data.layer.weights[i], sizeof(double), sum, outfile);
@@ -1013,9 +1008,7 @@ write_graph(layer* const node, FILE* outfile, uint64_t pass_index){
 		fwrite(&node->data.layer.parameter_a, sizeof(uint64_t), 1, outfiles);
 	}
 	fwrite(&node->next_count, sizeof(uint64_t), 1, outfile);
-	for (uint64_t i = 0;i<node->next_count;++i){
-		write_graph(node->next[i], outfile, pass_index);
-	}
+	fwrite(&node->next, sizeof(uint64_t), node->next_count, outfile);
 }
 
 void
@@ -1033,8 +1026,11 @@ write_network(network* const net, const char* filename){
 	fwrite(&net->weight_parameter_b, sizeof(double), 1, outfile);
 	fwrite(&net->bias_parameter_a, sizeof(double), 1, outfile);
 	fwrite(&net->bias_parameter_b, sizeof(double), 1, outfile);
-	uint64_t pass_index = net->input->pass_index+1;
-	write_graph(net->input, outfile, pass_index);
+	fwrite(&net->node_count, sizeof(uint64_t), 1, outfile);
+	fwrite(&net->node_capacity, sizeof(uint64_t), 1, outfile);
+	for (uint64_t i = 0;i<net->node_count;++i){
+		write_node(net, net->nodes[i], outfile);
+	}
 	fclose(outfile);
 }
 

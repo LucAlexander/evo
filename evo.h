@@ -210,7 +210,7 @@ void activation_swish_partial(double* const, const double* const, uint64_t, doub
 void activation_gelu_partial(double* const, const double* const, uint64_t, double);
 void activation_selu_partial(double* const, const double* const, uint64_t, double);
 
-void write_graph(layer* const node, FILE* outfile, uint64_t pass_index);
+void write_node(network* const net, layer* const node, FILE* outfile);
 void write_network(network* const net, const char* filename);
 void load_graph(pool* const mem, layer** const input, layer** const output, FILE* infile);
 network load_network(pool* const mem, const char* filename);
