@@ -1124,7 +1124,7 @@ load_network(pool* const mem, const char* filename){
 			layer_link(&net, mem, i, node->next[k]);
 		}
 	}
-	sort_connections(net, NULL, net.input, net.input->pass_index+1);
+	sort_connections(&net, NULL, net.input, net.input->pass_index+1);
 	net.input->pass_index += 1;
 	return net;
 }

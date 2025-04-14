@@ -142,13 +142,13 @@ typedef struct network {
 network network_init(pool* const mem, layer* const input, layer* const output, WEIGHT_FUNC w, BIAS_FUNC b, double weight_a, double weight_b, double bias_a, double bias_b, uint64_t batch_size, double learning_rate, LOSS_FUNC l);
 void network_register_layer(network* const net, layer* const node);
 layer* input_init(pool* const mem, uint64_t width);
-layer* layer_init(pool* const mem, uint64_t width, ACTIVATION_FUNC activation);
+layer* layer_init(pool* const mem, uint64_t width, ACTIVATION_FUNC activation, uint64_t parameter_a);
 void layer_link(network* const net, pool* const mem, uint64_t a, uint64_t b);
 void layer_unlink(network* const net, uint64_t a, uint64_t b);
 void layer_insert(network* const net, pool* const mem, uint64_t a, uint64_t b, uint64_t c);
 void reset_simulation_flags(network* const net, layer* const node);
-void sort_connections(network* const net, layer* const prev, layeR* const node, uint64_t pass_index);
-void allocate_weights(network* const net, pool* const mem, layer* const prev, layer* const node, uint64_t pass_index);
+void sort_connections(network* const net, layer* const prev, layer* const node, uint64_t pass_index);
+void allocate_weights(network* const net, pool* const mem, layer* const node, uint64_t pass_index);
 void forward(network* const net, layer* const node, uint64_t pass_index);
 void backward(network* const net, layer* const node);
 void apply_gradients(network* const net, layer* const node, uint64_t pass_index);
