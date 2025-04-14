@@ -146,7 +146,7 @@ layer* layer_init(pool* const mem, uint64_t width, ACTIVATION_FUNC activation);
 void layer_link(network* const net, pool* const mem, uint64_t a, uint64_t b);
 void layer_unlink(network* const net, uint64_t a, uint64_t b);
 void layer_insert(network* const net, pool* const mem, uint64_t a, uint64_t b, uint64_t c);
-void reset_simulation_flags(layer* const node);
+void reset_simulation_flags(network* const net, layer* const node);
 void allocate_weights(network* const net, pool* const mem, layer* const prev, layer* const node, uint64_t pass_index);
 void forward(network* const net, layer* const node, uint64_t pass_index);
 void backward(network* const net, layer* const node);
@@ -212,7 +212,7 @@ void activation_selu_partial(double* const, const double* const, uint64_t, doubl
 
 void write_node(network* const net, layer* const node, FILE* outfile);
 void write_network(network* const net, const char* filename);
-void load_graph(pool* const mem, layer** const input, layer** const output, FILE* infile);
+void load_nodes(network* const net, pool* const node, FILE* infile);
 network load_network(pool* const mem, const char* filename);
 
 #endif

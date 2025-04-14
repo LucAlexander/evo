@@ -7,7 +7,6 @@
 #include <stdlib.h>
 
 /* TODO
- * serialization
  * loading
  * multithreading
  * SIMD
@@ -116,7 +115,7 @@ network_register_layer(network* const net, layer* const node){
 	if (net->node_count >= net->node_capacity){
 		layer** new = pool_request(net->mem, sizeof(layer*)*net->node_capacity*2);
 		for (uint64_t i = 0;i<net->node_capacity;++i){
-			new[i] = new->nodes[i];
+			new[i] = net->nodes[i];
 		}
 		net->nodes = new;
 		net->node_capacity *= 2;
@@ -237,13 +236,13 @@ layer_insert(network* const net, pool* const mem, uint64_t a, uint64_t b, uint64
 }
 
 void
-reset_simulation_flags(layer* const node){
+reset_simulation_flags(network* const net, layer* const node){
 	if (node->simulated == 0){
 		return;
 	}
 	node->simulated = 0;
 	for (uint64_t i = 0;i<node->next_count;++i){
-		reset_simulation_flags(node->next[i]);
+		reset_simulation_flags(net, net->nodes[node->next[i]]);
 	}
 }
 
@@ -260,6 +259,7 @@ allocate_weights(network* const net, pool* const mem, layer* const prev, layer* 
 		}
 		return;
 	}
+	assert(prev != NULL);
 	for (uint64_t i = 0;i<node->next_count;++i){
 		for (uint64_t k = i;k<node->next_count;++k){
 			if (node->next[k] < node->next[i]){
@@ -372,7 +372,7 @@ backward(network* const net, layer* const node){
 			continue;
 		}
 		for (uint64_t k = 0;k<prev->next_count;++k){
-			if (prev->next[k] != node){
+			if (net->nodes[prev->next[k]] != node){
 				continue;
 			}
 			for (uint64_t t = 0;t<prev->data.layer.width;++t){
@@ -471,12 +471,12 @@ void
 network_train(network* const net, double** data, uint64_t data_size, double** expected){
 	assert(data_size % net->batch_size == 0);
 	uint64_t pass = net->input->pass_index+1;
-	zero_gradients(net->input, pass);
+	zero_gradients(net, net->input, pass);
 	pass += 1;
 	for (uint64_t i = 0;i<data_size;++i){
 		for (uint64_t k = i;i<k+net->batch_size;++i){
 			memcpy(net->input->data.input.output, data[i], net->input->data.input.width);
-			forward(net->input, pass);
+			forward(net, net->input, pass);
 			pass += 1;
 			double loss = losses[net->loss](
 				net->loss_output,
@@ -485,7 +485,7 @@ network_train(network* const net, double** data, uint64_t data_size, double** ex
 				net->output->data.layer.width,
 				net->loss_parameter_a
 			);
-			//TODO write loss to file
+			printf("loss: %lf\n", loss);
 			loss_partials[net->derivative](
 				net->output->data.layer.activation_gradients,
 				net->output->data.layer.activated,
@@ -497,6 +497,7 @@ network_train(network* const net, double** data, uint64_t data_size, double** ex
 		}
 		apply_gradients(net, net->input, pass);
 		pass += 1;
+		reset_simulation_flags(net, net->input);
 	}
 }
 
@@ -996,19 +997,64 @@ write_node(network* const net, layer* const node, FILE* outfile){
 	fwrite(&node->data.layer.width, sizeof(uint64_t), 1, outfile);
 	if (node->tag == LAYER_NODE){
 		uint64_t sum = 0;
-		for (uint64_t i = 0;i<node->data.layer.prev_count;++i){
+		for (uint64_t i = 0;i<node->prev_count;++i){
 			sum += net->nodes[node->prev[i]]->data.layer.width;
 		}
+		fwrite(&sum, sizeof(uint64_t), 1, outfile);
 		for (uint64_t i = 0;i<node->data.layer.width;++i){
 			fwrite(&node->data.layer.weights[i], sizeof(double), sum, outfile);
 		}
 		fwrite(&node->data.layer.bias, sizeof(double), node->data.layer.width, outfile);
 		fwrite(&node->data.layer.activation, sizeof(ACTIVATION_FUNC), 1, outfile);
 		fwrite(&node->data.layer.derivative, sizeof(ACTIVATION_PARTIAL_FUNC), 1, outfile);
-		fwrite(&node->data.layer.parameter_a, sizeof(uint64_t), 1, outfiles);
+		fwrite(&node->data.layer.parameter_a, sizeof(uint64_t), 1, outfile);
 	}
 	fwrite(&node->next_count, sizeof(uint64_t), 1, outfile);
 	fwrite(&node->next, sizeof(uint64_t), node->next_count, outfile);
+}
+
+void
+load_nodes(network* const net, pool* const mem, FILE* infile){
+	layer* node = pool_request(mem, sizeof(layer));
+	uint64_t err = fread(&node->tag, sizeof(uint8_t), 1, infile);
+	while (err != 0){
+		fread(&node->data.layer.width, sizeof(uint64_t), 1, infile);
+		node->data.layer.output = pool_request(mem, sizeof(double)*node->data.layer.width);
+		if (node->tag == LAYER_NODE){
+			uint64_t sum;
+			fread(&sum, sizeof(uint64_t), 1, infile);
+			node->data.layer.weights = pool_request(mem, sizeof(double*)*node->data.layer.width);
+			for (uint64_t i = 0;i<node->data.layer.width;++i){
+				node->data.layer.weights[i] = pool_request(mem, sizeof(double)*sum);
+				fread(&node->data.layer.weights[i], sizeof(double), sum, infile);
+			}
+			node->data.layer.bias = pool_request(mem, sizeof(double)*node->data.layer.width);
+			fread(&node->data.layer.bias, sizeof(double), node->data.layer.width, infile);
+			fread(&node->data.layer.activation, sizeof(ACTIVATION_FUNC), 1, infile);
+			fread(&node->data.layer.derivative, sizeof(ACTIVATION_PARTIAL_FUNC), 1, infile);
+			fread(&node->data.layer.parameter_a, sizeof(uint64_t), 1, infile);
+			node->data.layer.activated = pool_request(mem, sizeof(double)*node->data.layer.width);
+			node->data.layer.bias_gradients= pool_request(mem, sizeof(double)*node->data.layer.width);
+			node->data.layer.activation_gradients = pool_request(mem, sizeof(double)*node->data.layer.width);
+		}
+		else {
+			net->input = node;
+		}
+		fread(&node->next_count, sizeof(uint64_t), 1, infile);
+		node->next_capacity = node->next_count;
+		node->next = pool_request(mem, sizeof(uint64_t)*node->next_capacity);
+		fread(&node->next, sizeof(uint64_t), node->next_count, infile);
+		if (node->next_count == 0){
+			net->output = node;
+		}
+		node->pass_index = 0;
+		node->simulated = 0;
+		node->prev_count = 0;
+		node->prev_capacity = 2;
+		node->prev = pool_request(mem, sizeof(uint64_t)*2);
+		network_register_layer(net, node);
+		err = fread(&node->tag, sizeof(uint8_t), 1, infile);
+	}
 }
 
 void
@@ -1034,11 +1080,6 @@ write_network(network* const net, const char* filename){
 	fclose(outfile);
 }
 
-void
-load_graph(pool* const mem, layer** const input, layer** const output, FILE* infile){
-	//TODO
-}
-
 network
 load_network(pool* const mem, const char* filename){
 	FILE* infile = fopen(filename, "rb");
@@ -1058,7 +1099,19 @@ load_network(pool* const mem, const char* filename){
 	fread(&net.weight_parameter_b, sizeof(double), 1, infile);
 	fread(&net.bias_parameter_a, sizeof(double), 1, infile);
 	fread(&net.bias_parameter_b, sizeof(double), 1, infile);
-	load_graph(mem, &net.input, &net.output, infile);
+	fread(&net.node_count, sizeof(uint64_t), 1, infile);
+	fread(&net.node_capacity, sizeof(uint64_t), 1, infile);
+	net.nodes = pool_request(mem, sizeof(uint64_t)*net.node_capacity);
+	load_nodes(&net, mem, infile);
+	fclose(infile);
+	net.loss_output = pool_request(mem, sizeof(double)*net.input->data.input.width);
+	for (uint64_t i = 0;i<net.node_count;++i){
+		layer* node = net.nodes[i];
+		for (uint64_t k = 0;k<node->next_count;++k){
+			layer_link(&net, mem, i, node->next[k]);
+		}
+	}
+	allocate_weights(&net, mem, NULL, net.input, net.input->pass_index+1);
 	return net;
 }
 
