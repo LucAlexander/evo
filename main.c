@@ -141,7 +141,7 @@ input_init(pool* const mem, uint64_t width){
 }
 
 layer*
-layer_init(pool* const mem, uint64_t width, ACTIVATION_FUNC activation){
+layer_init(pool* const mem, uint64_t width, ACTIVATION_FUNC activation, uint64_t parameter_a){
 	layer* node = pool_request(mem, sizeof(layer));
 	node->tag = LAYER_NODE;
 	node->data.layer.output = pool_request(mem, sizeof(double)*width);
@@ -153,6 +153,7 @@ layer_init(pool* const mem, uint64_t width, ACTIVATION_FUNC activation){
 	node->data.layer.activation_gradients = pool_request(mem, sizeof(double)*width);
 	node->data.layer.activation = activation;
 	node->data.layer.derivative = activation;
+	node->data.layer.parameter_a = parameter_a;
 	node->prev = pool_request(mem, 2*sizeof(uint64_t));
 	node->prev_count = 0;
 	node->prev_capacity = 2;
@@ -245,19 +246,11 @@ reset_simulation_flags(network* const net, layer* const node){
 }
 
 void
-allocate_weights(network* const net, pool* const mem, layer* const prev, layer* const node, uint64_t pass_index){
+sort_connections(network* const net, layer* const prev, layer* const node, uint64_t pass_index){
 	if (node->pass_index >= pass_index){
 		return;
 	}
 	node->pass_index += 1;
-	if (node->tag == INPUT_NODE){
-		assert(prev == NULL);
-		for (uint64_t i = 0;i<node->next_count;++i){
-			allocate_weights(net, mem, node, net->nodes[node->next[i]], pass_index);
-		}
-		return;
-	}
-	assert(prev != NULL);
 	for (uint64_t i = 0;i<node->next_count;++i){
 		for (uint64_t k = i;k<node->next_count;++k){
 			if (node->next[k] < node->next[i]){
@@ -267,17 +260,37 @@ allocate_weights(network* const net, pool* const mem, layer* const prev, layer* 
 			}
 		}
 	}
-	for (uint64_t i = 0;i<node->prev_count;++i){
-		for (uint64_t k = i;k<node->prev_count;++k){
-			if (node->prev[k] < node->prev[i]){
-				uint64_t temp = node->prev[k];
-				node->prev[k] = node->prev[i];
-				node->prev[i] = temp;
+	if (node->tag == LAYER_NODE){
+		assert(prev != NULL);
+		for (uint64_t i = 0;i<node->prev_count;++i){
+			for (uint64_t k = i;k<node->prev_count;++k){
+				if (node->prev[k] < node->prev[i]){
+					uint64_t temp = node->prev[k];
+					node->prev[k] = node->prev[i];
+					node->prev[i] = temp;
+				}
+			}
+			if (net->nodes[node->prev[i]] == prev){
+				node->back_direction = i;
 			}
 		}
-		if (net->nodes[node->prev[i]] == prev){
-			node->back_direction = i;
+	}
+	for (uint64_t i = 0;i<node->next_count;++i){
+		sort_connections(net, node, net->nodes[node->next[i]], pass_index);
+	}
+}
+
+void
+allocate_weights(network* const net, pool* const mem, layer* const node, uint64_t pass_index){
+	if (node->pass_index >= pass_index){
+		return;
+	}
+	node->pass_index += 1;
+	if (node->tag == INPUT_NODE){
+		for (uint64_t i = 0;i<node->next_count;++i){
+			allocate_weights(net, mem, net->nodes[node->next[i]], pass_index);
 		}
+		return;
 	}
 	node->data.layer.weights = pool_request(mem, sizeof(double*)*node->data.layer.width);
 	node->data.layer.weight_gradients = pool_request(mem, sizeof(double)*node->data.layer.width);
@@ -291,7 +304,7 @@ allocate_weights(network* const net, pool* const mem, layer* const prev, layer* 
 		node->data.layer.weight_gradients[i] = pool_request(mem, sizeof(double)*sum);
 	}
 	for (uint64_t i = 0;i<node->next_count;++i){
-		allocate_weights(net, mem, node, net->nodes[node->next[i]], pass_index);
+		allocate_weights(net, mem, net->nodes[node->next[i]], pass_index);
 	}
 }
 
@@ -1022,7 +1035,9 @@ load_nodes(network* const net, pool* const mem, FILE* infile){
 			uint64_t sum;
 			fread(&sum, sizeof(uint64_t), 1, infile);
 			node->data.layer.weights = pool_request(mem, sizeof(double*)*node->data.layer.width);
+			node->data.layer.weight_gradients = pool_request(mem, sizeof(double*)*node->data.layer.width);
 			for (uint64_t i = 0;i<node->data.layer.width;++i){
+				node->data.layer.weights[i] = pool_request(mem, sizeof(double)*sum);
 				node->data.layer.weights[i] = pool_request(mem, sizeof(double)*sum);
 				fread(&node->data.layer.weights[i], sizeof(double), sum, infile);
 			}
@@ -1032,7 +1047,7 @@ load_nodes(network* const net, pool* const mem, FILE* infile){
 			fread(&node->data.layer.derivative, sizeof(ACTIVATION_PARTIAL_FUNC), 1, infile);
 			fread(&node->data.layer.parameter_a, sizeof(uint64_t), 1, infile);
 			node->data.layer.activated = pool_request(mem, sizeof(double)*node->data.layer.width);
-			node->data.layer.bias_gradients= pool_request(mem, sizeof(double)*node->data.layer.width);
+			node->data.layer.bias_gradients = pool_request(mem, sizeof(double)*node->data.layer.width);
 			node->data.layer.activation_gradients = pool_request(mem, sizeof(double)*node->data.layer.width);
 		}
 		else {
@@ -1109,7 +1124,8 @@ load_network(pool* const mem, const char* filename){
 			layer_link(&net, mem, i, node->next[k]);
 		}
 	}
-	allocate_weights(&net, mem, NULL, net.input, net.input->pass_index+1);
+	sort_connections(net, NULL, net.input, net.input->pass_index+1);
+	net.input->pass_index += 1;
 	return net;
 }
 

@@ -147,6 +147,7 @@ void layer_link(network* const net, pool* const mem, uint64_t a, uint64_t b);
 void layer_unlink(network* const net, uint64_t a, uint64_t b);
 void layer_insert(network* const net, pool* const mem, uint64_t a, uint64_t b, uint64_t c);
 void reset_simulation_flags(network* const net, layer* const node);
+void sort_connections(network* const net, layer* const prev, layeR* const node, uint64_t pass_index);
 void allocate_weights(network* const net, pool* const mem, layer* const prev, layer* const node, uint64_t pass_index);
 void forward(network* const net, layer* const node, uint64_t pass_index);
 void backward(network* const net, layer* const node);
