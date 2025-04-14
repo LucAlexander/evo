@@ -3,6 +3,7 @@
 
 #include "kickstart.h"
 #include <time.h>
+#include <stdio.h>
 
 #define TEMP_POOL_SIZE 0x1000000
 #define GELU_C 0.044715
@@ -80,13 +81,14 @@ typedef enum ACTIVATION_PARTIAL_FUNC {
 
 typedef struct layer layer;
 typedef struct layer {
-	layer** prev;
+	uint64_t* prev;
 	uint64_t prev_count;
 	uint64_t prev_capacity;
-	layer** next;
+	uint64_t* next;
 	uint64_t next_count;
 	uint64_t next_capacity;
 	uint64_t pass_index;
+	uint64_t back_direction;
 	union {
 		struct {
 			uint64_t width;
@@ -118,6 +120,9 @@ typedef struct layer {
 typedef struct network {
 	pool* mem;
 	pool temp;
+	layer** nodes;
+	uint64_t node_count;
+	uint64_t node_capacity;
 	layer* input;
 	layer* output;
 	LOSS_FUNC loss;
@@ -135,17 +140,18 @@ typedef struct network {
 } network;
 
 network network_init(pool* const mem, layer* const input, layer* const output, WEIGHT_FUNC w, BIAS_FUNC b, double weight_a, double weight_b, double bias_a, double bias_b, uint64_t batch_size, double learning_rate, LOSS_FUNC l);
+void network_register_layer(network* const net, layer* const node);
 layer* input_init(pool* const mem, uint64_t width);
 layer* layer_init(pool* const mem, uint64_t width, ACTIVATION_FUNC activation);
-void layer_link(pool* const mem, layer* const a, layer* const b);
-void layer_unlink(layer* const a, layer* const b);
-void layer_insert(pool* const mem, layer* const a, layer* const b, layer* const c);
+void layer_link(network* const net, pool* const mem, uint64_t a, uint64_t b);
+void layer_unlink(network* const net, uint64_t a, uint64_t b);
+void layer_insert(network* const net, pool* const mem, uint64_t a, uint64_t b, uint64_t c);
 void reset_simulation_flags(layer* const node);
-void allocate_weights(pool* const mem, layer* const node, uint64_t pass_index);
-void forward(layer* const node, uint64_t pass_index);
+void allocate_weights(network* const net, pool* const mem, layer* const prev, layer* const node, uint64_t pass_index);
+void forward(network* const net, layer* const node, uint64_t pass_index);
 void backward(network* const net, layer* const node);
 void apply_gradients(network* const net, layer* const node, uint64_t pass_index);
-void zero_gradients(layer* const node, uint64_t pass_index);
+void zero_gradients(network* const net, layer* const node, uint64_t pass_index);
 void network_train(network* const net, double** data, uint64_t data_size, double** expected);
 void init_params(network* const net, layer* const node, uint64_t pass_index);
 
@@ -204,7 +210,9 @@ void activation_swish_partial(double* const, const double* const, uint64_t, doub
 void activation_gelu_partial(double* const, const double* const, uint64_t, double);
 void activation_selu_partial(double* const, const double* const, uint64_t, double);
 
+void write_graph(layer* const node, FILE* outfile, uint64_t pass_index);
 void write_network(network* const net, const char* filename);
-network load_network(const char* filename);
+void load_graph(pool* const mem, layer** const input, layer** const output, FILE* infile);
+network load_network(pool* const mem, const char* filename);
 
 #endif

@@ -1,7 +1,6 @@
 #include "evo.h"
 #include "kickstart.h"
 #include <assert.h>
-#include <stdio.h>
 #include <string.h>
 #include <math.h>
 #include <stddef.h>
@@ -92,6 +91,9 @@ network_init(
 	network net = {
 		.mem = mem,
 		.temp = pool_alloc(TEMP_POOL_SIZE, POOL_STATIC),
+		.nodes = pool_request(mem, sizeof(layer*)*2),
+		.node_count = 0,
+		.node_capacity = 2,
 		.input = input,
 		.output = output,
 		.loss_output = pool_request(mem, sizeof(double)*output->data.layer.width),
@@ -109,6 +111,20 @@ network_init(
 	return net;
 }
 
+void
+network_register_layer(network* const net, layer* const node){
+	if (net->node_count >= net->node_capacity){
+		layer** new = pool_request(net->mem, sizeof(layer*)*net->node_capacity*2);
+		for (uint64_t i = 0;i<net->node_capacity;++i){
+			new[i] = new->nodes[i];
+		}
+		net->nodes = new;
+		net->node_capacity *= 2;
+	}
+	net->nodes[net->node_count] = node;
+	net->node_count += 1;
+}
+
 layer*
 input_init(pool* const mem, uint64_t width){
 	layer* input = pool_request(mem, sizeof(layer));
@@ -118,11 +134,12 @@ input_init(pool* const mem, uint64_t width){
 	input->prev = NULL;
 	input->prev_count = 0;
 	input->prev_capacity = 0;
-	input->next = pool_request(mem, 2*sizeof(layer*));
+	input->next = pool_request(mem, 2*sizeof(uint64_t));
 	input->next_count = 0;
 	input->next_capacity = 2;
 	input->simulated = 0;
 	input->pass_index = 0;
+	input->back_direction = 0;
 	return input;
 }
 
@@ -139,73 +156,84 @@ layer_init(pool* const mem, uint64_t width, ACTIVATION_FUNC activation){
 	node->data.layer.activation_gradients = pool_request(mem, sizeof(double)*width);
 	node->data.layer.activation = activation;
 	node->data.layer.derivative = activation;
-	node->prev = pool_request(mem, 2*sizeof(layer*));
+	node->prev = pool_request(mem, 2*sizeof(uint64_t));
 	node->prev_count = 0;
 	node->prev_capacity = 2;
-	node->next = pool_request(mem, 2*sizeof(layer*));
+	node->next = pool_request(mem, 2*sizeof(uint64_t));
 	node->next_count = 0;
 	node->next_capacity = 2;
 	node->simulated = 0;
 	node->branched = 0;
 	node->pass_index = 0;
+	node->back_direction = 0;
 	return node;
 }
 
 void
-layer_link(pool* const mem, layer* const a, layer* const b){
-	assert(b->tag != INPUT_NODE);
-	if (a->next_count == a->next_capacity){
-		layer** new = pool_request(mem, sizeof(layer*)*a->next_capacity*2);
-		for (uint64_t i = 0;i<a->next_capacity;++i){
-			new[i] = a->next[i];
+layer_link(network* const net, pool* const mem, uint64_t a, uint64_t b){
+	assert(a < net->node_count);
+	assert(b < net->node_count);
+	layer* node_a = net->nodes[a];
+	layer* node_b = net->nodes[b];
+	assert(node_b->tag != INPUT_NODE);
+	if (node_a->next_count == node_a->next_capacity){
+		uint64_t* new = pool_request(mem, sizeof(uint64_t)*node_a->next_capacity*2);
+		for (uint64_t i = 0;i<node_a->next_capacity;++i){
+			new[i] = node_a->next[i];
 		}
-		a->next_capacity *= 2;
+		node_a->next = new;
+		node_a->next_capacity *= 2;
 	}
-	a->next[a->next_count] = b;
-	a->next_count += 1;
-	if (b->prev_count == b->prev_capacity){
-		layer** new = pool_request(mem, sizeof(layer*)*b->prev_capacity*2);
-		for (uint64_t i = 0;i<b->prev_capacity;++i){
-			new[i] = b->next[i];
+	node_a->next[node_a->next_count] = b;
+	node_a->next_count += 1;
+	if (node_b->prev_count == node_b->prev_capacity){
+		uint64_t* new = pool_request(mem, sizeof(uint64_t)*node_b->prev_capacity*2);
+		for (uint64_t i = 0;i<node_b->prev_capacity;++i){
+			new[i] = node_b->prev[i];
 		}
-		b->prev_capacity *= 2;
+		node_b->prev = new;
+		node_b->prev_capacity *= 2;
 	}
-	b->prev[b->prev_count] = b;
-	b->prev_count += 1;
+	node_b->prev[node_b->prev_count] = a;
+	node_b->prev_count += 1;
 }
 
 void
-layer_unlink(layer* const a, layer* const b){
-	assert(b->tag != INPUT_NODE);
+layer_unlink(network* const net, uint64_t a, uint64_t b){
+	assert(a < net->node_count);
+	assert(b < net->node_count);
+	layer* node_a = net->nodes[a];
+	layer* node_b = net->nodes[b];
+	assert(node_b->tag != INPUT_NODE);
 	uint8_t found = 0;
-	for (uint64_t i = 0;i<a->next_count;++i){
-		if (a->next[i] == b){
+	for (uint64_t i = 0;i<node_a->next_count;++i){
+		if (node_a->next[i] == b){
 			found = 1;
 		}
 		else if (found == 1){
-			a->next[i-1] = a->next[i];
+			node_a->next[i-1] = node_a->next[i];
 		}
 	}
 	assert(found == 1);
-	a->next_count -= 1;
+	node_a->next_count -= 1;
 	found = 0;
-	for (uint64_t i = 0;i<b->prev_count;++i){
-		if (b->prev[i] == a){
+	for (uint64_t i = 0;i<node_b->prev_count;++i){
+		if (node_b->prev[i] == a){
 			found = 1;
 		}
 		else if (found == 1){
-			b->prev[i-1] = b->prev[i];
+			node_b->prev[i-1] = node_b->prev[i];
 		}
 	}
 	assert(found == 1);
-	b->prev_count -= 1;
+	node_b->prev_count -= 1;
 }
 
 void
-layer_insert(pool* const mem, layer* const a, layer* const b, layer* const c){
-	layer_unlink(a, b);
-	layer_link(mem, a, b);
-	layer_link(mem, b, c);
+layer_insert(network* const net, pool* const mem, uint64_t a, uint64_t b, uint64_t c){
+	layer_unlink(net, a, b);
+	layer_link(net, mem, a, b);
+	layer_link(net, mem, b, c);
 }
 
 void
@@ -220,22 +248,44 @@ reset_simulation_flags(layer* const node){
 }
 
 void
-allocate_weights(pool* const mem, layer* const node, uint64_t pass_index){
+allocate_weights(network* const net, pool* const mem, layer* const prev, layer* const node, uint64_t pass_index){
 	if (node->pass_index >= pass_index){
 		return;
 	}
 	node->pass_index += 1;
 	if (node->tag == INPUT_NODE){
+		assert(prev == NULL);
 		for (uint64_t i = 0;i<node->next_count;++i){
-			allocate_weights(mem, node->next[i], pass_index);
+			allocate_weights(net, mem, node, net->nodes[node->next[i]], pass_index);
 		}
 		return;
+	}
+	for (uint64_t i = 0;i<node->next_count;++i){
+		for (uint64_t k = i;k<node->next_count;++k){
+			if (node->next[k] < node->next[i]){
+				uint64_t temp = node->next[k];
+				node->next[k] = node->next[i];
+				node->next[i] = temp;
+			}
+		}
+	}
+	for (uint64_t i = 0;i<node->prev_count;++i){
+		for (uint64_t k = i;k<node->prev_count;++k){
+			if (node->prev[k] < node->prev[i]){
+				uint64_t temp = node->prev[k];
+				node->prev[k] = node->prev[i];
+				node->prev[i] = temp;
+			}
+		}
+		if (net->nodes[node->prev[i]] == prev){
+			node->back_direction = i;
+		}
 	}
 	node->data.layer.weights = pool_request(mem, sizeof(double*)*node->data.layer.width);
 	node->data.layer.weight_gradients = pool_request(mem, sizeof(double)*node->data.layer.width);
 	uint64_t sum = 0;
 	for (uint64_t i = 0;i<node->prev_count;++i){
-		layer* prev = node->prev[i];
+		layer* prev = net->nodes[node->prev[i]];
 		sum += prev->data.layer.width;
 	}
 	for (uint64_t i = 0;i<node->data.layer.width;++i){
@@ -243,15 +293,15 @@ allocate_weights(pool* const mem, layer* const node, uint64_t pass_index){
 		node->data.layer.weight_gradients[i] = pool_request(mem, sizeof(double)*sum);
 	}
 	for (uint64_t i = 0;i<node->next_count;++i){
-		allocate_weights(mem, node->next[i], pass_index);
+		allocate_weights(net, mem, node, net->nodes[node->next[i]], pass_index);
 	}
 }
 
 void
-forward(layer* const node, uint64_t pass_index){
+forward(network* const net, layer* const node, uint64_t pass_index){
 	if (node->tag == INPUT_NODE){
 		for (uint64_t i = 0;i<node->next_count;++i){
-			forward(node->next[i], pass_index);
+			forward(net, net->nodes[node->next[i]], pass_index);
 		}
 		return;
 	}
@@ -264,7 +314,7 @@ forward(layer* const node, uint64_t pass_index){
 		node->data.layer.output[i] = node->data.layer.bias[i];
 		uint64_t weight_index = 0;
 		for (uint64_t p = 0;p<node->prev_count;++p){
-			layer* prev = node->prev[p];
+			layer* prev = net->nodes[node->prev[p]];
 			if (prev->simulated == 0){
 				weight_index += prev->data.layer.width;
 				continue;
@@ -284,7 +334,7 @@ forward(layer* const node, uint64_t pass_index){
 	);
 	node->simulated = 1;
 	for (uint64_t i = 0;i<node->next_count;++i){
-		forward(node->next[i], pass_index);
+		forward(net, net->nodes[node->next[i]], pass_index);
 	}
 }
 
@@ -308,7 +358,7 @@ backward(network* const net, layer* const node){
 	for (uint64_t i = 0;i<node->data.layer.width;++i){
 		uint64_t weight_index = 0;
 		for (uint64_t p = 0;p<node->prev_count;++p){
-			layer* prev = node->prev[p];
+			layer* prev = net->nodes[node->prev[p]];
 			for (uint64_t k = 0;k<prev->data.layer.width;++k){
 				double dzdw = prev->data.layer.activated[k];
 				node->data.layer.weight_gradients[i][weight_index] += dzdw * dadz[i] * dcda[i];
@@ -317,7 +367,7 @@ backward(network* const net, layer* const node){
 		}
 	}
 	for (uint64_t i = 0;i<node->prev_count;++i){
-		layer* prev = node->prev[i];
+		layer* prev = net->nodes[node->prev[i]];
 		if (prev->tag == INPUT_NODE){
 			continue;
 		}
@@ -336,19 +386,13 @@ backward(network* const net, layer* const node){
 	}
 	if (node->prev_count > 1){
 		if (node->branched == 1){
-			/* NOTE 
-			 * This hinges on the first inward node linked
-			 * to any given node being the nonlooping path to the input node.
-			 * If we get any infinite loops we know this is probably the culprit,
-			 * or a missed pass index check.
-			 * */
-			backward(net, node->prev[0]);
+			backward(net, net->nodes[node->prev[node->back_direction]]);
 			return;
 		}
 		node->branched = 1;
 	}
 	for (uint64_t i = 0;i<node->prev_count;++i){
-		backward(net, node->prev[i]);
+		backward(net, net->nodes[node->prev[i]]);
 	}
 }
 
@@ -360,7 +404,7 @@ apply_gradients(network* const net, layer* const node, uint64_t pass_index){
 	node->pass_index += 1;
 	if (node->tag == INPUT_NODE){
 		for (uint64_t i = 0;i<node->next_count;++i){
-			apply_gradients(net, node->next[i], pass_index);
+			apply_gradients(net, net->nodes[node->next[i]], pass_index);
 		}
 	}
 	for (uint64_t i = 0;i<node->data.layer.width;++i){
@@ -372,7 +416,7 @@ apply_gradients(network* const net, layer* const node, uint64_t pass_index){
 	for (uint64_t i = 0;i<node->data.layer.width;++i){
 		uint64_t weight_index = 0;
 		for (uint64_t p = 0;p<node->prev_count;++p){
-			layer* prev = node->prev[p];
+			layer* prev = net->nodes[node->prev[p]];
 			if (prev->simulated == 0){
 				weight_index += prev->data.layer.width;
 			}
@@ -385,19 +429,19 @@ apply_gradients(network* const net, layer* const node, uint64_t pass_index){
 		}
 	}
 	for (uint64_t i = 0;i<node->next_count;++i){
-		apply_gradients(net, node->next[i], pass_index);
+		apply_gradients(net, net->nodes[node->next[i]], pass_index);
 	}
 }
 
 void
-zero_gradients(layer* const node, uint64_t pass_index){
+zero_gradients(network* const net, layer* const node, uint64_t pass_index){
 	if (node->pass_index >= pass_index){
 		return;
 	}
 	node->pass_index += 1;
 	if (node->tag == INPUT_NODE){
 		for (uint64_t i = 0;i<node->next_count;++i){
-			zero_gradients(node->next[i], pass_index);
+			zero_gradients(net, net->nodes[node->next[i]], pass_index);
 		}
 		return;
 	}
@@ -408,7 +452,7 @@ zero_gradients(layer* const node, uint64_t pass_index){
 	for (uint64_t i = 0;i<node->data.layer.width;++i){
 		uint64_t weight_index = 0;
 		for (uint64_t p = 0;p<node->prev_count;++p){
-			layer* prev = node->prev[p];
+			layer* prev = net->nodes[node->prev[p]];
 			if (prev->simulated == 0){
 				weight_index += prev->data.layer.width;
 			}
@@ -419,7 +463,7 @@ zero_gradients(layer* const node, uint64_t pass_index){
 		}
 	}
 	for (uint64_t i = 0;i<node->next_count;++i){
-		zero_gradients(node->next[i], pass_index);
+		zero_gradients(net, net->nodes[node->next[i]], pass_index);
 	}
 }
 
@@ -464,13 +508,13 @@ init_params(network* const net, layer* const node, uint64_t pass_index){
 	node->pass_index += 1;
 	if (node->tag == INPUT_NODE){
 		for (uint64_t i = 0;i<node->next_count;++i){
-			init_params(net, node->next[i], pass_index);
+			init_params(net, net->nodes[node->next[i]], pass_index);
 		}
 		return;
 	}
 	uint64_t sum = 0;
 	for (uint64_t i = 0;i<node->prev_count;++i){
-		sum += node->prev[i]->data.layer.width;
+		sum += net->nodes[node->prev[i]]->data.layer.width;
 	}
 	weight_inits[net->weight](
 		node->data.layer.weights,
@@ -483,7 +527,7 @@ init_params(network* const net, layer* const node, uint64_t pass_index){
 		net->bias_parameter_a, net->bias_parameter_b
 	);
 	for (uint64_t i = 0;i<node->next_count;++i){
-		init_params(net, node->next[i], pass_index);
+		init_params(net, net->nodes[node->next[i]], pass_index);
 	}
 }
 
@@ -946,19 +990,80 @@ activation_selu(double* const buffer, const double* const output, uint64_t size,
 	}
 }
 
+//TODO fix
+void
+write_graph(layer* const node, FILE* outfile, uint64_t pass_index){
+	if (node->pass_index >= pass_index){
+		return;
+	}
+	node->pass_index += 1;
+	fwrite(&node->index, sizeof(uint64_t), 1, outfile);
+	fwrite(&node->data.layer.width, sizeof(uint64_t), 1, outfile);
+	if (node->tag == LAYER_NODE){
+		uint64_t sum = 0;
+		for (uint64_t i = 0;i<node->data.layer.prev_count;++i){
+			sum += node->prev[i].data.layer.width;
+		}
+		for (uint64_t i = 0;i<node->data.layer.width;++i){
+			fwrite(&node->data.layer.weights[i], sizeof(double), sum, outfile);
+		}
+		fwrite(&node->data.layer.bias, sizeof(double), node->data.layer.width, outfile);
+		fwrite(&node->data.layer.activation, sizeof(ACTIVATION_FUNC), 1, outfile);
+		fwrite(&node->data.layer.derivative, sizeof(ACTIVATION_PARTIAL_FUNC), 1, outfile);
+		fwrite(&node->data.layer.parameter_a, sizeof(uint64_t), 1, outfiles);
+	}
+	fwrite(&node->next_count, sizeof(uint64_t), 1, outfile);
+	for (uint64_t i = 0;i<node->next_count;++i){
+		write_graph(node->next[i], outfile, pass_index);
+	}
+}
+
 void
 write_network(network* const net, const char* filename){
 	FILE* outfile = fopen(filename, "wb");
 	assert(outfile != NULL);
-	// TODO fwrite(src, size, count, outfile);
+	fwrite(&net->loss, sizeof(LOSS_FUNC), 1, outfile);
+	fwrite(&net->derivative, sizeof(LOSS_PARTIAL_FUNC), 1, outfile);
+	fwrite(&net->bias, sizeof(BIAS_FUNC), 1, outfile);
+	fwrite(&net->weight, sizeof(WEIGHT_FUNC), 1, outfile);
+	fwrite(&net->batch_size, sizeof(uint64_t), 1, outfile);
+	fwrite(&net->learning_rate, sizeof(double), 1, outfile);
+	fwrite(&net->loss_parameter_a, sizeof(double), 1, outfile);
+	fwrite(&net->weight_parameter_a, sizeof(double), 1, outfile);
+	fwrite(&net->weight_parameter_b, sizeof(double), 1, outfile);
+	fwrite(&net->bias_parameter_a, sizeof(double), 1, outfile);
+	fwrite(&net->bias_parameter_b, sizeof(double), 1, outfile);
+	uint64_t pass_index = net->input->pass_index+1;
+	write_graph(net->input, outfile, pass_index);
+	fclose(outfile);
+}
+
+void
+load_graph(pool* const mem, layer** const input, layer** const output, FILE* infile){
+	//TODO
 }
 
 network
-load_network(const char* filename){
+load_network(pool* const mem, const char* filename){
 	FILE* infile = fopen(filename, "rb");
 	assert(infile != NULL);
-	// TODO fread(dest, size, count, infile);
-	return (network){};
+	network net = {
+		.mem = mem,
+		.temp = pool_alloc(TEMP_POOL_SIZE, POOL_STATIC)
+	};
+	fread(&net.loss, sizeof(LOSS_FUNC), 1, infile);
+	fread(&net.derivative, sizeof(LOSS_PARTIAL_FUNC), 1, infile);
+	fread(&net.bias, sizeof(BIAS_FUNC), 1, infile);
+	fread(&net.weight, sizeof(WEIGHT_FUNC), 1, infile);
+	fread(&net.batch_size, sizeof(uint64_t), 1, infile);
+	fread(&net.learning_rate, sizeof(double), 1, infile);
+	fread(&net.loss_parameter_a, sizeof(double), 1, infile);
+	fread(&net.weight_parameter_a, sizeof(double), 1, infile);
+	fread(&net.weight_parameter_b, sizeof(double), 1, infile);
+	fread(&net.bias_parameter_a, sizeof(double), 1, infile);
+	fread(&net.bias_parameter_b, sizeof(double), 1, infile);
+	load_graph(mem, &net.input, &net.output, infile);
+	return net;
 }
 
 int
