@@ -9,7 +9,7 @@
 /* TODO
  * multithreading
  * SIMD
- * parser
+ * testing
  */
 
 static activation_function activations[] = {
@@ -128,6 +128,7 @@ network_build(network* const net){
 	sort_connections(net, NULL, net->input, net->input->pass_index+1);
 	allocate_weights(net, net->mem, net->input, net->input->pass_index+1);
 	reset_simulation_flags(net, net->input);
+	init_params(net, net->input, net->input->pass_index+1);
 }
 
 layer*
@@ -254,7 +255,7 @@ layer_unlink(network* const net, uint64_t a, uint64_t b){
 
 void
 layer_insert(network* const net, pool* const mem, uint64_t a, uint64_t b, uint64_t c){
-	layer_unlink(net, a, b);
+	layer_unlink(net, a, c);
 	layer_link(net, mem, a, b);
 	layer_link(net, mem, b, c);
 }
@@ -395,6 +396,14 @@ backward(network* const net, layer* const node){
 		uint64_t weight_index = 0;
 		for (uint64_t p = 0;p<node->prev_count;++p){
 			layer* prev = net->nodes[node->prev[p]];
+			if (prev->tag == INPUT_NODE){
+				for (uint64_t k = 0;k<prev->data.layer.width;++k){
+					double dzdw = prev->data.input.output[k];
+					node->data.layer.weight_gradients[i][weight_index] += dzdw * dadz[i] * dcda[i];
+					weight_index += 1;
+				}
+				continue;
+			}
 			for (uint64_t k = 0;k<prev->data.layer.width;++k){
 				double dzdw = prev->data.layer.activated[k];
 				node->data.layer.weight_gradients[i][weight_index] += dzdw * dadz[i] * dcda[i];
@@ -442,6 +451,7 @@ apply_gradients(network* const net, layer* const node, uint64_t pass_index){
 		for (uint64_t i = 0;i<node->next_count;++i){
 			apply_gradients(net, net->nodes[node->next[i]], pass_index);
 		}
+		return;
 	}
 	for (uint64_t i = 0;i<node->data.layer.width;++i){
 		double average = (node->data.layer.bias_gradients[i]/net->batch_size);
@@ -455,6 +465,7 @@ apply_gradients(network* const net, layer* const node, uint64_t pass_index){
 			layer* prev = net->nodes[node->prev[p]];
 			if (prev->simulated == 0){
 				weight_index += prev->data.layer.width;
+				continue;
 			}
 			for (uint64_t k = 0;k<prev->data.layer.width;++k){
 				double average = (node->data.layer.weight_gradients[i][weight_index]/net->batch_size);
@@ -491,6 +502,7 @@ zero_gradients(network* const net, layer* const node, uint64_t pass_index){
 			layer* prev = net->nodes[node->prev[p]];
 			if (prev->simulated == 0){
 				weight_index += prev->data.layer.width;
+				continue;
 			}
 			for (uint64_t k = 0;k<prev->data.layer.width;++k){
 				node->data.layer.weight_gradients[i][weight_index] = 0;
@@ -509,7 +521,8 @@ network_train(network* const net, double** data, uint64_t data_size, double** ex
 	uint64_t pass = net->input->pass_index+1;
 	zero_gradients(net, net->input, pass);
 	pass += 1;
-	for (uint64_t i = 0;i<data_size;++i){
+	uint64_t i = 0;
+	while (i<data_size){
 		for (uint64_t k = i;i<k+net->batch_size;++i){
 			memcpy(net->input->data.input.output, data[i], net->input->data.input.width*sizeof(double));
 			forward(net, net->input, pass);
@@ -608,7 +621,7 @@ void
 weight_initialization_xavier(double** const out, uint64_t in_size, uint64_t out_size, double aa, double b){
 	float a = sqrtf(1/(in_size+out_size));
 	for (uint64_t i = 0;i<out_size;++i){
-		for (uint64_t k = 0;k<in_size;++i){
+		for (uint64_t k = 0;k<in_size;++k){
 			out[i][k] = uniform_distribution(-a, a);
 		}
 	}
@@ -618,7 +631,7 @@ void
 weight_initialization_he(double** const out, uint64_t in_size, uint64_t out_size, double aa, double b){
 	float a = sqrtf(6/in_size);
 	for (uint64_t i = 0;i<out_size;++i){
-		for (uint64_t k = 0;k<in_size;++i){
+		for (uint64_t k = 0;k<in_size;++k){
 			out[i][k] = uniform_distribution(-a, a);
 		}
 	}
@@ -628,7 +641,7 @@ void
 weight_initialization_lecun(double** const out, uint64_t in_size, uint64_t out_size, double a, double b){
 	float std = sqrtf(1/in_size);
 	for (uint64_t i = 0;i<out_size;++i){
-		for (uint64_t k = 0;k<in_size;++i){
+		for (uint64_t k = 0;k<in_size;++k){
 			out[i][k] = normal_distribution(0, std);
 		}
 	}
@@ -637,7 +650,7 @@ weight_initialization_lecun(double** const out, uint64_t in_size, uint64_t out_s
 void
 weight_initialization_uniform(double** const out, uint64_t in_size, uint64_t out_size, double a, double b){
 	for (uint64_t i = 0;i<out_size;++i){
-		for (uint64_t k = 0;k<in_size;++i){
+		for (uint64_t k = 0;k<in_size;++k){
 			out[i][k] = uniform_distribution(a, b);
 		}
 	}
@@ -646,7 +659,7 @@ weight_initialization_uniform(double** const out, uint64_t in_size, uint64_t out
 void
 weight_initialization_normal(double** const out, uint64_t in_size, uint64_t out_size, double a, double b){
 	for (uint64_t i = 0;i<out_size;++i){
-		for (uint64_t k = 0;k<in_size;++i){
+		for (uint64_t k = 0;k<in_size;++k){
 			out[i][k] = normal_distribution(a, b);
 		}
 	}
@@ -1245,6 +1258,7 @@ main(int argc, char** argv){
 
 
 	layer* input = input_init(&mem, 32);
+	layer* hidden = layer_init(&mem, 64, ACTIVATION_RELU, 0);
 	layer* output = layer_init(&mem, 2, ACTIVATION_SIGMOID, 0);
 
 
@@ -1255,15 +1269,16 @@ main(int argc, char** argv){
 		BIAS_INITIALIZATION_ZERO,
 		1, 2,
 		0, 0,
-		32,
-		0.000001,
+		32, 0.000001,
 		LOSS_MSE
 	);
 
 
 	uint64_t input_id = network_register_layer(&net, input);
+	uint64_t hidden_id = network_register_layer(&net, hidden);
 	uint64_t output_id = network_register_layer(&net, output);
 	layer_link(&net, &mem, input_id, output_id);
+	layer_insert(&net, &mem, input_id, hidden_id, output_id);
 
 
 	network_build(&net);
@@ -1274,6 +1289,23 @@ main(int argc, char** argv){
 	network copy = load_network(&mem, "test.mdl");
 	printf("loaded\n");
 	network_show(&copy);
+
+	double** training_data = pool_request(&mem, sizeof(double*)*128);
+	for (uint32_t i = 0;i<128;++i){
+		training_data[i] = pool_request(&mem, sizeof(double)*net.input->data.input.width);
+		for (uint32_t k = 0;k<net.input->data.input.width;++k){
+			training_data[i][k] = random();
+		}
+	}
+	double** expected = pool_request(&mem, sizeof(double*)*128);
+	for (uint32_t i = 0;i<128;++i){
+		expected[i] = pool_request(&mem, sizeof(double)*net.input->data.input.width);
+		for (uint32_t k = 0;k<net.input->data.input.width;++k){
+			expected[i][k] = random();
+		}
+	}
+
+	network_train(&net, training_data, 128, expected);
 
 	pool_dealloc(&mem);
 	return 0;
