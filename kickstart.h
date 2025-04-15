@@ -27,6 +27,7 @@ pool pool_alloc(uint64_t cap, POOL_TAG t);
 void pool_empty(pool* const p);
 void pool_dealloc(pool* const p);
 void* pool_request(pool* const p, uint64_t bytes);
+void* pool_request_aligned(pool* const p, uint64_t bytes, uint16_t alignment);
 void* pool_byte(pool* const p);
 void pool_save(pool* const p);
 void pool_load(pool* const p);

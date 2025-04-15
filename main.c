@@ -1257,6 +1257,7 @@ main(int argc, char** argv){
 	pool mem = pool_alloc(TEMP_POOL_SIZE, POOL_STATIC);
 
 
+
 	layer* input = input_init(&mem, 32);
 	layer* a = layer_init(&mem, 64, ACTIVATION_SIGMOID, 0);
 	layer* b = layer_init(&mem, 64, ACTIVATION_SIGMOID, 0);

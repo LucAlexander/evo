@@ -52,6 +52,30 @@ void* pool_request(pool* const p, uint64_t bytes){
 	return addr;
 }
 
+void* pool_request_aligned(pool* const p, uint64_t bytes, uint16_t alignment){
+	uint64_t original = bytes;
+	uint64_t diff = alignment-((uint64_t)(p->ptr) % alignment);
+	if (diff != 0){
+		bytes += diff;
+	}
+	if (p->left < bytes){
+		uint64_t capacity = p->left + (p->ptr-p->buffer);
+		if (p->tag == POOL_STATIC || bytes > capacity){
+			return NULL;
+		}
+		if (p->next == NULL){
+			p->next = malloc(sizeof(pool));
+			*p->next = pool_alloc(p->left + (p->ptr-p->buffer), POOL_DYNAMIC);
+		}
+		return pool_request_aligned(p->next, original, alignment);
+	}
+	p->left -= bytes;
+	void* addr = p->ptr;
+	p->ptr += bytes;
+	addr += diff;
+	return addr;
+}
+
 void* pool_byte(pool* const p){	
 	if (p->left <= 0 || p->tag == POOL_DYNAMIC){
 		return NULL;
