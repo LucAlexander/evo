@@ -5,7 +5,15 @@
 #include <time.h>
 #include <stdio.h>
 
+#ifdef __SSE__
+#include <xmmintrin.h>
+
+__m128d exp_neg_pd(__m128d x);
+__m128d tanh_pd(__m128d x);
+#endif
+
 #define SSE_ALIGNMENT 16
+#define DOUBLE_DIV 128/sizeof(double)
 
 #define TEMP_POOL_SIZE 0x1000000
 #define GELU_C 0.044715

@@ -6,10 +6,6 @@
 #include <stddef.h>
 #include <stdlib.h>
 
-#ifdef __SSE__
-#include <xmmintrin.h>
-#endif
-
 static activation_function activations[] = {
 	activation_sigmoid,
 	activation_relu,
@@ -647,7 +643,7 @@ bias_initialization_const_uneven(double* const buffer, uint64_t size, double a, 
 
 void
 weight_initialization_xavier(double** const out, uint64_t in_size, uint64_t out_size, double aa, double b){
-	float a = sqrtf(1/(in_size+out_size));
+	double a = sqrtf(1/(in_size+out_size));
 	for (uint64_t i = 0;i<out_size;++i){
 		for (uint64_t k = 0;k<in_size;++k){
 			out[i][k] = uniform_distribution(-a, a);
@@ -657,7 +653,7 @@ weight_initialization_xavier(double** const out, uint64_t in_size, uint64_t out_
 
 void
 weight_initialization_he(double** const out, uint64_t in_size, uint64_t out_size, double aa, double b){
-	float a = sqrtf(6/in_size);
+	double a = sqrtf(6/in_size);
 	for (uint64_t i = 0;i<out_size;++i){
 		for (uint64_t k = 0;k<in_size;++k){
 			out[i][k] = uniform_distribution(-a, a);
@@ -667,7 +663,7 @@ weight_initialization_he(double** const out, uint64_t in_size, uint64_t out_size
 
 void
 weight_initialization_lecun(double** const out, uint64_t in_size, uint64_t out_size, double a, double b){
-	float std = sqrtf(1/in_size);
+	double std = sqrtf(1/in_size);
 	for (uint64_t i = 0;i<out_size;++i){
 		for (uint64_t k = 0;k<in_size;++k){
 			out[i][k] = normal_distribution(0, std);
@@ -695,29 +691,40 @@ weight_initialization_normal(double** const out, uint64_t in_size, uint64_t out_
 
 void
 loss_mse_partial(double* const output, const double* const result, const double* const expected, uint64_t size, double a){
+#ifdef __SSE__
+#else
 	for (uint64_t i = 0;i<size;++i){
 		output[i] = 2*(result[i]-expected[i]);
 	}
+#endif
 }
 
 void
 loss_mae_partial(double* const output, const double* const result, const double* const expected, uint64_t size, double a){
+#ifdef __SSE__
+#else
 	for (uint64_t i = 0;i<size;++i){
 		double term = result[i]-expected[i];
 		output[i] = term/fabsf(term);
 	}
+#endif
 }
 
 void
 loss_mape_partial(double* const output, const double* const result, const double* const expected, uint64_t size, double a){
+#ifdef __SSE__
+#else
 	for (uint64_t i = 0;i<size;++i){
 		double term = expected[i]-result[i];
 		output[i] = (1/powf(expected[i], 2))*term/fabsf(term);
 	}
+#endif
 }
 
 void
 loss_huber_partial(double* const output, const double* const result, const double* const expected, uint64_t size, double a){
+#ifdef __SSE__
+#else
 	for (uint64_t i = 0;i<size;++i){
 		double term = expected[i]-result[i];
 		if (term <= a){
@@ -726,67 +733,91 @@ loss_huber_partial(double* const output, const double* const result, const doubl
 		}
 		output[i] = a*(int)((0<term)-(term<0));
 	}
+#endif
 }
 
 void
 loss_huber_modified_partial(double* const output, const double* const result, const double* const expected, uint64_t size, double a){
+#ifdef __SSE__
+#else
 	double coef = 1/a;
 	for (uint64_t i = 0;i<size;++i){
-		float term = result[i]-expected[i];
+		double term = result[i]-expected[i];
 		if (expected[i]-result[i] <= a){
 			output[i] = term*coef;
 			continue;
 		}
 		output[i] = (int)((0<term)-(term-0));
 	}
+#endif
 }
 
 void
 loss_cross_entropy_partial(double* const output, const double* const result, const double* const expected, uint64_t size, double a){
+#ifdef __SSE__
+#else
 	for (uint64_t i = 0;i<size;++i){
 		output[i] = (-(expected[i]/result[i]))+((1-expected[i])/(1-result[i]));
 	}
+#endif
 }
 
 void
 loss_hinge_partial(double* const output, const double* const result, const double* const expected, uint64_t size, double a){
+#ifdef __SSE__
+#else
 	for (uint64_t i = 0;i<size;++i){
 		if (expected[i]*result[i] >= 1){
 			output[i] = 0;
 		}
 		output[i] = -expected[i];
 	}
+#endif
 }
 
 void
 activation_sigmoid_partial(double* const output, const double* const buffer, uint64_t size, double a){
+#ifdef __SSE__
+#else
 	for (uint64_t i = 0;i<size;++i){
-		float fx = 1/(1+expf(-buffer[i]));
+		double fx = 1/(1+expf(-buffer[i]));
 		output[i] = fx*(1-fx);
 	}
+#endif
 }
 
 void
 activation_relu_partial(double* const output, const double* const buffer, uint64_t size, double a){
+#ifdef __SSE__
+#else
 	for (uint64_t i = 0;i<size;++i){
 		output[i] = (buffer[i] > 0);
 	}
+#endif
 }
 
 void
 activation_tanh_partial(double* const output, const double* const buffer, uint64_t size, double a){
+#ifdef __SSE__
+#else
 	for (uint64_t i = 0;i<size;++i){
 		output[i] = 1-powf(tanh(buffer[i]), 2);
 	}
+#endif
 }
 
 void
 activation_linear_partial(double* const output, const double* const buffer, uint64_t size, double a){
-	memset(output, 1, size*sizeof(float));
+#ifdef __SSE__
+#else
+	memset(output, 1, size*sizeof(double));
+#endif
 }
 
 void
 activation_relu_leaky_partial(double* const output, const double* const buffer, uint64_t size, double a){
+#ifdef __SSE__
+#else
 	for (uint64_t i = 0;i<size;++i){
 		if (buffer[i] > 0){
 			output[i] = 1;
@@ -794,10 +825,13 @@ activation_relu_leaky_partial(double* const output, const double* const buffer, 
 		}
 		output[i] = 0.01;
 	}
+#endif
 }
 
 void
 activation_relu_parametric_partial(double* const output, const double* const buffer, uint64_t size, double a){
+#ifdef __SSE__
+#else
 	for (uint64_t i = 0;i<size;++i){
 		if (buffer[i] > 0){
 			output[i] = 1;
@@ -805,10 +839,13 @@ activation_relu_parametric_partial(double* const output, const double* const buf
 		}
 		output[i] = a;
 	}
+#endif
 }
 
 void
 activation_elu_partial(double* const output, const double* const buffer, uint64_t size, double a){
+#ifdef __SSE__
+#else
 	for (uint64_t i = 0;i<size;++i){
 		if (buffer[i] > 0){
 			output[i] = 1;
@@ -816,12 +853,15 @@ activation_elu_partial(double* const output, const double* const buffer, uint64_
 		}
 		output[i] = a+(a*(expf(buffer[i])-1));
 	}
+#endif
 }
 
 void
 activation_softmax_partial(double* const output, const double* const buffer, uint64_t size, double a){
-	float sum = 0.0f;
-	float* softmax_values = malloc(sizeof(float)*size);
+#ifdef __SSE__
+#else
+	double sum = 0.0f;
+	double* softmax_values = malloc(sizeof(double)*size);
 	for (uint64_t i = 0;i<size;++i){
 		softmax_values[i] = exp(buffer[i]);
 		sum += softmax_values[i];
@@ -838,80 +878,181 @@ activation_softmax_partial(double* const output, const double* const buffer, uin
 		}
 	}
 	free(softmax_values);
+#endif
 }
 
 void
 activation_swish_partial(double* const output, const double* const buffer, uint64_t size, double a){
+#ifdef __SSE__
+#else
 	for (uint64_t i = 0;i<size;++i){
-		float fx = 1/(1+expf(-buffer[i]*a));
+		double fx = 1/(1+expf(-buffer[i]*a));
 		output[i] = fx+a*buffer[i]*fx*(1-fx);
 	}
+#endif
 }
 
 void
 activation_gelu_partial(double* const output, const double* const buffer, uint64_t size, double a){
-	float s2op = sqrt(2/M_PI);
+#ifdef __SSE__
+#else
+	double s2op = sqrt(2/M_PI);
 	for (uint64_t i = 0;i<size;++i){
-		float x = buffer[i];
-		float inside = tanh(s2op*(x+GELU_C*powf(x, 3)));
+		double x = buffer[i];
+		double inside = tanh(s2op*(x+GELU_C*powf(x, 3)));
 		output[i] = 0.5*(1+inside)+0.5*x*(1-powf(inside, 2))*s2op*(1+3*GELU_C*x*x);
 	}
+#endif
 }
 
 void
 activation_selu_partial(double* const output, const double* const buffer, uint64_t size, double a){
+#ifdef __SSE__
+#else
+	double lambda_alpha = SELU_LAMBDA*SELU_ALPHA;
 	for (uint64_t i = 0;i<size;++i){
 		double x = output[i];
 		if (x > 0){
 			output[i] = SELU_LAMBDA;
 			continue;
 		}
-		output[i] = SELU_LAMBDA*SELU_ALPHA*expf(x);
+		output[i] = lambda_alpha*expf(x);
 	}
+#endif
 }
 
 double
 loss_mse(double* const buffer, const double* const result, const double* const expected, uint64_t size, double a){
-	float sum = 0;
-	for (uint64_t i = 0;i<size;++i){
-		float loss = expected[i]-result[i];
+#ifdef __SSE__
+	__m128d s = _mm_setzero_pd();
+	uint64_t i;
+	for (i = 0;i+DOUBLE_DIV<=size;i+=DOUBLE_DIV){
+		__m128d e = _mm_load_pd(expected+i);
+		__m128d r = _mm_load_pd(result+i);
+		__m128d loss = _mm_sub_pd(e, r);
+		_mm_store_pd(buffer+i,loss);
+		__m128d loss_squared = _mm_mul_pd(loss, loss);
+		s = _mm_add_pd(s,loss_squared);
+	}
+	double sum_array[DOUBLE_DIV];
+	_mm_store_pd(sum_array, s);
+	double sum = sum_array[0]+sum_array[1];
+	for (;i<size;++i){
+		double loss = expected[i]-result[i];
 		buffer[i] = loss;
 		sum += loss*loss;
 	}
 	return (sum)/(size);
+
+#else
+	double sum = 0;
+	for (uint64_t i = 0;i<size;++i){
+		double loss = expected[i]-result[i];
+		buffer[i] = loss;
+		sum += loss*loss;
+	}
+	return (sum)/(size);
+#endif
 }
 
 double
 loss_mae(double* const buffer, const double* const result, const double* const expected, uint64_t size, double a){
-	float sum = 0;
+#ifdef __SSE__
+	__m128d s = _mm_setzero_pd();
+	uint64_t i;
+	for (i= 0;i+DOUBLE_DIV<=size;i+=DOUBLE_DIV){
+		__m128d e = _mm_load_pd(expected+i);
+		__m128d r = _mm_load_pd(result+i);
+		__m128d loss = _mm_sub_pd(e, r);
+		_mm_store_pd(buffer+i,loss);
+		__m128d abs_loss = _mm_andnot_pd(_mm_set1_pd(-0.f), loss);
+		s = _mm_add_pd(s, abs_loss);
+	}
+	double sum_array[DOUBLE_DIV];
+	_mm_store_pd(sum_array, s);
+	double sum = sum_array[0]+sum_array[1];
+	for (;i<size;++i){
+		double loss = expected[i]-result[i];
+		buffer[i] = loss;
+		sum += fabsf(loss);
+	}
+	return sum/(size);
+#else
+	double sum = 0;
 	for (uint64_t i = 0;i<size;++i){
-		float loss = expected[i]-result[i];
+		double loss = expected[i]-result[i];
 		buffer[i] = loss;
 		sum += abs(loss);
 	}
 	return sum/(size);
+#endif
 }
 
 double
 loss_mape(double* const buffer, const double* const result, const double* const expected, uint64_t size, double a){
-	float sum = 0;
+#ifdef __SSE__
+	__m128d s = _mm_setzero_pd();
+	uint64_t i;
+	for (i= 0;i+DOUBLE_DIV<=size;i+=DOUBLE_DIV){
+		__m128d e = _mm_load_pd(expected+i);
+		__m128d r = _mm_load_pd(result+i);
+		__m128d loss = _mm_sub_pd(e, r);
+		_mm_store_pd(buffer+i,loss);
+		__m128d abs_loss = _mm_andnot_pd(_mm_set1_pd(-0.f), loss);
+		__m128d loss_div_e = _mm_div_pd(abs_loss, e);
+		s = _mm_add_pd(s,loss_div_e);
+	}
+	double sum_array[4];
+	_mm_store_pd(sum_array, s);
+	double sum = sum_array[0]+sum_array[1];
+	for (;i<size;++i){
+		double expect = expected[i];
+		double loss = expect-result[i];
+		buffer[i] = loss;
+		sum += fabsf(loss/expect);
+	}
+	return sum/(size);
+
+#else
+	double sum = 0;
 	for (uint64_t i = 0;i<size;++i){
-		float expect = expected[i];
-		float loss = expect-result[i];
+		double expect = expected[i];
+		double loss = expect-result[i];
 		buffer[i] = loss;
 		sum += abs(loss/expect);
 	}
 	return sum/(size);
+#endif
 }
 
 double
 loss_huber(double* const buffer, const double* const result, const double* const expected, uint64_t size, double a){
-	float sum = 0;
-	float hpsq = a*a*0.5;
-	for (uint64_t i = 0;i<size;++i){
-		float expect = expected[i];
-		float res = result[i];
-		float x = expect-res;
+#ifdef __SSE__
+	__m128d s = _mm_setzero_pd();
+	__m128d param_sq_half = _mm_set1_pd(a*a*0.5f);
+	__m128d param = _mm_set1_pd(a);
+	__m128d half = _mm_set1_pd(0.5f);
+	size_t i;
+	for (i= 0;i+DOUBLE_DIV<=size;i+=DOUBLE_DIV){
+		__m128d e = _mm_load_pd(expected+i);
+		__m128d r = _mm_load_pd(result+i);
+		__m128d loss = _mm_sub_pd(e, r);
+		_mm_store_pd(buffer+i,loss);
+		__m128d abs_loss = _mm_andnot_pd(_mm_set1_pd(-0.f), loss);
+		__m128d mask = _mm_cmple_pd(abs_loss, param);
+		__m128d case1 = _mm_mul_pd(_mm_mul_pd(loss, loss), half);
+		__m128d case2 = _mm_sub_pd(_mm_mul_pd(param, abs_loss), param_sq_half);
+		__m128d combined = _mm_or_pd(_mm_and_pd(mask, case1), _mm_andnot_pd(mask, case2));
+		s = _mm_add_pd(s,combined);
+	}
+	double sum_array[DOUBLE_DIV];
+	_mm_store_pd(sum_array, s);
+	double sum = sum_array[0]+sum_array[1];
+	double hpsq = a*a*0.5;
+	for (;i<size;++i){
+		double expect = expected[i];
+		double res = result[i];
+		double x = expect-res;
 		buffer[i] = x;
 		if (abs(x) <= a){
 			sum += x*x*0.5;
@@ -920,15 +1061,53 @@ loss_huber(double* const buffer, const double* const result, const double* const
 		sum += (a*abs(x))-hpsq;
 	}
 	return sum;
+
+#else
+	double sum = 0;
+	double hpsq = a*a*0.5;
+	for (uint64_t i = 0;i<size;++i){
+		double expect = expected[i];
+		double res = result[i];
+		double x = expect-res;
+		buffer[i] = x;
+		if (abs(x) <= a){
+			sum += x*x*0.5;
+			continue;
+		}
+		sum += (a*abs(x))-hpsq;
+	}
+	return sum;
+#endif
 }
 
 double
 loss_huber_modified(double* const buffer, const double* const result, const double* const expected, uint64_t size, double a){
-	float sum = 0;
-	for (uint64_t i = 0;i<size;++i){
-		float expect = expected[i];
-		float res = result[i];
-		float x = expect-res;
+#ifdef __SSE__
+	__m128d s = _mm_setzero_pd();
+	uint64_t i;
+	for (i= 0;i+DOUBLE_DIV<=size;i+=DOUBLE_DIV){
+		__m128d e = _mm_load_pd(expected+i);
+		__m128d r = _mm_load_pd(result+i);
+		__m128d loss = _mm_sub_pd(e, r);
+		_mm_store_pd(buffer+i,loss);
+		__m128d prod = _mm_mul_pd(e, r);
+		__m128d mask = _mm_cmpgt_pd(prod, _mm_set1_pd(-1.f));
+		__m128d ones = _mm_set1_pd(1.f);
+		__m128d sub = _mm_sub_pd(ones, prod);
+		__m128d zeros = _mm_setzero_pd();
+		__m128d case1 = _mm_max_pd(zeros, sub);
+		case1 = _mm_mul_pd(case1, case1);
+		__m128d case2 = _mm_mul_pd(_mm_set1_pd(-4.f), prod);
+		__m128d combined = _mm_or_pd(_mm_and_pd(mask, case1), _mm_andnot_pd(mask, case2));
+		s = _mm_add_pd(s,combined);
+	}
+	double sum_array[DOUBLE_DIV];
+	_mm_store_pd(sum_array, s);
+	double sum = sum_array[0]+sum_array[1];
+	for (;i<size;++i){
+		double expect = expected[i];
+		double res = result[i];
+		double x = expect-res;
 		buffer[i] = x;
 		x = expect*res;
 		if (x > -1){
@@ -938,58 +1117,210 @@ loss_huber_modified(double* const buffer, const double* const result, const doub
 		sum -= 4*x;
 	}
 	return sum;
+
+#else
+	double sum = 0;
+	for (uint64_t i = 0;i<size;++i){
+		double expect = expected[i];
+		double res = result[i];
+		double x = expect-res;
+		buffer[i] = x;
+		x = expect*res;
+		if (x > -1){
+			sum += pow(fmax(0, 1-x),2);
+			continue;
+		}
+		sum -= 4*x;
+	}
+	return sum;
+#endif
 }
 
 double
 loss_cross_entropy(double* const buffer, const double* const result, const double* const expected, uint64_t size, double a){
-	float sum = 0;
+#ifdef __SSE__
+	__m128d s = _mm_setzero_pd();
+	uint64_t i;
+	for (i= 0;i+DOUBLE_DIV<=size;i+=DOUBLE_DIV){
+		__m128d e = _mm_load_pd(expected+i);
+		__m128d r = _mm_load_pd(result+i);
+		__m128d loss = _mm_sub_pd(e, r);
+		_mm_store_pd(buffer+i,loss);
+		__m128d log_r = _mm_set_pd(logf(r[1]), logf(r[0]));
+		__m128d term = _mm_mul_pd(e, log_r);
+		s = _mm_add_pd(s,term);
+	}
+	double sum_array[DOUBLE_DIV];
+	_mm_store_pd(sum_array, s);
+	double sum = sum_array[0]+sum_array[1];
+	for (;i<size;++i){
+		double expect = expected[i];
+		double res = result[i];
+		buffer[i] = expect-res;
+		sum += expect*logf(res);
+	}
+	return -sum;
+#else
+	double sum = 0;
 	for (uint64_t i = 0;i<size;++i){
-		float expect = expected[i];
-		float res = result[i];
+		double expect = expected[i];
+		double res = result[i];
 		buffer[i] = expect-res;
 		sum += expect*log(res);
 	}
 	return -sum;
+#endif
 }
 
 double
 loss_hinge(double* const buffer, const double* const result, const double* const expected, uint64_t size, double a){
-	float sum = 0;
+#ifdef __SSE__
+	__m128d s = _mm_setzero_pd();
+	uint64_t i;
+	for (i= 0;i+DOUBLE_DIV<=size;i+=DOUBLE_DIV){
+		__m128d e = _mm_load_pd(expected+i);
+		__m128d r = _mm_load_pd(result+i);
+		__m128d loss = _mm_sub_pd(e, r);
+		_mm_store_pd(buffer+i,loss);
+		__m128d prod = _mm_mul_pd(e, r);
+		__m128d ones = _mm_set1_pd(1.0f);
+		__m128d term = _mm_sub_pd(ones, prod);
+		__m128d zeros = _mm_setzero_pd();
+		__m128d hinge = _mm_max_pd(zeros, term);
+		s = _mm_add_pd(s,hinge);
+	}
+	double sum_array[DOUBLE_DIV];
+	_mm_store_pd(sum_array, s);
+	double sum = sum_array[0]+sum_array[1];
+	for (;i<size;++i){
+		double expect = expected[i];
+		double res = result[i];
+		buffer[i] = expect-res;
+		sum += fmaxf(0,1-(expect*res));
+	}
+	return sum;
+#else
+	double sum = 0;
 	for (uint64_t i = 0;i<size;++i){
-		float expect = expected[i];
-		float res = result[i];
+		double expect = expected[i];
+		double res = result[i];
 		buffer[i] = expect-res;
 		sum += fmax(0,1-(expect*res));
 	}
 	return sum;
+#endif
 }
+
+#ifdef __SSE__
+__m128d
+exp_neg_pd(__m128d x) {
+	const __m128d one = _mm_set1_pd(1.0f);
+	const __m128d exp_c1 = _mm_set1_pd(0.04166669f);
+	const __m128d exp_c2 = _mm_set1_pd(0.5000004f);
+	__m128d x2 = _mm_mul_pd(x, x);  // x^2
+	__m128d x3 = _mm_mul_pd(x2, x); // x^3
+	// Compute the polynomial approximation: e^-x ≈ 1 - x - x^2/2 - x^3/6
+	__m128d poly = _mm_sub_pd(one, x);        // 1 - x
+	poly = _mm_sub_pd(poly, _mm_mul_pd(exp_c2, x2)); // 1 - x - x^2/2
+	poly = _mm_sub_pd(poly, _mm_mul_pd(exp_c1, x3)); // 1 - x - x^2/2 - x^3/6
+	return poly;
+}
+#endif
 
 void
 activation_sigmoid(double* const buffer, const double* const output, uint64_t size, double a){
+#ifdef __SSE__
+	uint64_t i;
+	const __m128d one = _mm_set1_pd(1.0f);
+	for (i = 0;i+DOUBLE_DIV<=size;i+=DOUBLE_DIV){
+		__m128d x = _mm_load_pd(output+i);
+		x = _mm_xor_pd(x, _mm_set1_pd(-0.f));
+		__m128d exp_neg_x = exp_neg_pd(x);
+		__m128d sigmoid = _mm_div_pd(one, _mm_add_pd(one, exp_neg_x));
+		_mm_store_pd(buffer+i, sigmoid);
+	}
+	for (;i<size;++i){
+		buffer[i] = 1/(1+expf(-output[i]));
+	}
+#else
 	for (uint64_t i = 0;i<size;++i){
 		buffer[i] = 1/(1+expf(-output[i]));
 	}
+#endif
 }
 
 void
 activation_relu(double* const buffer, const double* const output, uint64_t size, double a){
+#ifdef __SSE__
+	uint64_t i;
+	for (i = 0;i+DOUBLE_DIV<=size;i+=DOUBLE_DIV){
+		__m128d zeros = _mm_setzero_pd();
+		__m128d term = _mm_load_pd(output+i);
+		__m128d relu = _mm_max_pd(zeros, term);
+		_mm_store_pd(buffer+i, relu);
+	}
+	for (;i<size;++i){
+		buffer[i] = fmaxf(0,output[i]);
+	}
+#else
 	for (uint64_t i = 0;i<size;++i){
 		buffer[i] = fmax(0,output[i]);
 	}
+#endif
 }
+
+#ifdef __SSE__
+__m128d
+tanh_pd(__m128d x) {
+	const __m128d one = _mm_set1_pd(1.0f);
+	// calculate e^(2x)
+	__m128d exp2x = exp_neg_pd(_mm_mul_pd(x, _mm_set1_pd(-2.0f)));
+	exp2x = _mm_div_pd(one, exp2x);
+	// calculate (e^(2x) - 1) / (e^(2x) + 1)
+	__m128d num = _mm_sub_pd(exp2x, one);
+	__m128d den = _mm_add_pd(exp2x, one);
+	__m128d tanh_x = _mm_div_pd(num, den);
+	return tanh_x;
+}
+#endif
 
 void
 activation_tanh(double* const buffer, const double* const output, uint64_t size, double a){
+#ifdef __SSE__
+	uint64_t i;
+	for (i = 0;i+DOUBLE_DIV<=size;i+=DOUBLE_DIV){
+		__m128d x = _mm_load_pd(output+i);
+		__m128d tanh_approx = tanh_pd(x);
+		_mm_store_pd(buffer+i, tanh_approx);
+	}
+	for (;i<size;++i){
+		buffer[i] = tanh(output[i]);
+	}
+#else
 	for (uint64_t i = 0;i<size;++i){
 		buffer[i] = tanh(output[i]);
 	}
+#endif
 }
 
 void
 activation_binary_step(double* const buffer, const double* const output, uint64_t size, double a){
+#ifdef __SSE__
+	const __m128d zero = _mm_setzero_pd();
+	uint64_t i;
+	for (i = 0;i+DOUBLE_DIV<=size;i+=DOUBLE_DIV){
+		__m128d x = _mm_load_pd(output+i);
+		__m128d step = _mm_cmpge_pd(x, zero);
+		_mm_store_pd(buffer+i, step);
+	}
+	for (;i<size;++i){
+		buffer[i] = output[i] >= 0;
+	}
+#else
 	for (uint64_t i = 0;i<size;++i){
 		buffer[i] = output[i] >= 0;
 	}
+#endif
 }
 
 void
@@ -999,73 +1330,210 @@ activation_linear(double* const buffer, const double* const output, uint64_t siz
 
 void
 activation_relu_leaky(double* const buffer, const double* const output, uint64_t size, double a){
-	float x;
+#ifdef __SSE__
+	uint64_t i;
+	const __m128d tenth = _mm_set1_pd(0.1f);
+	for (i=0;i+DOUBLE_DIV<=size;i+=DOUBLE_DIV){
+		__m128d x = _mm_load_pd(output+i);
+		__m128d term = _mm_max_pd(_mm_mul_pd(tenth, x), x);
+		_mm_store_pd(buffer+i, term);
+	}
+	for (;i<size;++i){
+		double x = output[i];
+		buffer[i] = fmaxf(0.1*x,x);
+	}
+#else
+	double x;
 	for (uint64_t i = 0;i<size;++i){
 		x = output[i];
 		buffer[i] = fmax(0.1*x,x);
 	}
+#endif
 }
 
 void
 activation_relu_parametric(double* const buffer, const double* const output, uint64_t size, double a){
-	float x;
+#ifdef __SSE__
+	uint64_t i;
+	const __m128d tenth = _mm_set1_pd(a);
+	for (i=0;i+DOUBLE_DIV<=size;i+=DOUBLE_DIV){
+		__m128d x = _mm_load_pd(output+i);
+		__m128d term = _mm_max_pd(_mm_mul_pd(tenth, x), x);
+		_mm_store_pd(buffer+i, term);
+	}
+	for (;i<size;++i){
+		double x = output[i];
+		buffer[i] = fmaxf(a*x,x);
+	}
+#else
+	double x;
 	for (uint64_t i = 0;i<size;++i){
 		x = output[i];
 		buffer[i] = fmax(a*x, x);
 	}
+#endif
 }
 
 void
 activation_elu(double* const buffer, const double* const output, uint64_t size, double a){
-	float x;
+#ifdef __SSE__
+	const __m128d zero = _mm_setzero_pd();
+	const __m128d one = _mm_set1_pd(1.0f);
+	const __m128d alpha = _mm_set1_pd(a);
+	uint64_t i;
+	for (i=0;i+DOUBLE_DIV<=size;i+=DOUBLE_DIV){
+		__m128d x = _mm_load_pd(output+i);
+		__m128d mask = _mm_cmplt_pd(x, zero);
+#ifdef nm_sse4_1
+		__m128d negs = _mm_mul_pd(alpha, _mm_sub_pd(exp_neg_pd(x), one));
+		__m128d term = _mm_blendv_pd(x, negs, mask);
+#else
+		__m128d negs = _mm_and_pd(mask, _mm_mul_pd(alpha, _mm_sub_pd(exp_neg_pd(x), one)));
+		__m128d term = _mm_add_pd(_mm_andnot_pd(mask, x), negs);
+#endif
+		_mm_store_pd(buffer+i, term);
+	}
+	for (;i<size;++i){
+		double x = output[i];
+		if (x < 0){
+			buffer[i] = a*(expf(x)-1);
+		}
+		else{
+			buffer[i] = x;
+		}
+	}
+#else
+	double x;
 	for (uint64_t i = 0;i<size;++i){
 		x = output[i];
 		if (x < 0){
 			buffer[i] = a*(expf(x)-1);
 		}
+		else{
+			buffer[i] = x;
+		}
 	}
+#endif
 }
 
 void
 activation_softmax(double* const buffer, const double* const output, uint64_t size, double a){
-	float denom = 0;
+#ifdef __SSE__
+	__m128d s = _mm_setzero_pd();
+	const __m128d n1 = _mm_set1_pd(-1.0f);
+	uint64_t i;
+	for (i = 0;i+DOUBLE_DIV<=size;i+=DOUBLE_DIV){
+		__m128d x = _mm_load_pd(output+i);
+		__m128d exp_x = exp_neg_pd(_mm_mul_pd(x, n1));
+		s = _mm_add_pd(s, exp_x);
+	}
+	double simd_s[DOUBLE_DIV];
+	_mm_store_pd(simd_s, s);
+	double denom = simd_s[0]+simd_s[1];
+	for (;i<size;++i){
+		denom += expf(output[i]);
+	}
+	const __m128d d = _mm_set1_pd(denom);
+	for (i = 0;i+DOUBLE_DIV<=size;i+=DOUBLE_DIV){
+		__m128d x = _mm_load_pd(output+i);
+		__m128d exp_x = exp_neg_pd(_mm_mul_pd(x, n1));
+		__m128d term = _mm_div_pd(exp_x, d);
+		_mm_store_pd(buffer+i, term);
+	}
+	for (;i<size;++i){
+		buffer[i] = expf(output[i])/denom;
+	}
+#else
+	double denom = 0;
 	for (uint64_t i = 0;i<size;++i){
 		denom += expf(output[i]);
 	}
 	for (uint64_t i = 0;i<size;++i){
 		buffer[i] = expf(output[i])/denom;
 	}
+#endif
 }
 
 void
 activation_swish(double* const buffer, const double* const output, uint64_t size, double a){
-	float x;
+#ifdef __SSE__
+	uint64_t i;
+	const __m128d one = _mm_set1_pd(1.0f);
+	for (i = 0;i+DOUBLE_DIV < size;i += DOUBLE_DIV){
+		__m128d x = _mm_load_pd(output+i);
+		__m128d denom = _mm_add_pd(one, exp_neg_pd(x));
+		__m128d term = _mm_div_pd(x, denom);
+		_mm_store_pd(buffer+i, term);
+	}
+	for (;i<size;++i){
+		double x = output[i];
+		buffer[i] = x/(1+expf(-x));
+	}
+#else
+	double x;
 	for (uint64_t i = 0;i<size;++i){
 		x = output[i];
 		buffer[i] = x/(1+expf(-x));
 	}
+#endif
 }
 
 void
 activation_gelu(double* const buffer, const double* const output, uint64_t size, double a){
-	float x;
-	const float s2p  = sqrtf(2/M_PI);
+#ifdef __SSE__
+	uint64_t i;
+	const double s2p = sqrtf(2.0f)/M_PI;
+	const __m128d half = _mm_set1_pd(0.5f);
+	const __m128d one = _mm_set1_pd(1.0f);
+	const __m128d sqrt2vpi = _mm_set1_pd(s2p);
+	const __m128d gelu_c = _mm_set1_pd(GELU_C);
+	for (i = 0 ;i+DOUBLE_DIV <= size;i += DOUBLE_DIV){
+		__m128d x = _mm_load_pd(output+i);
+		__m128d a = _mm_mul_pd(
+			sqrt2vpi,
+			_mm_add_pd(
+				x,
+				_mm_mul_pd(
+					gelu_c,
+					_mm_mul_pd(x, _mm_mul_pd(x, x))
+				)
+			)
+		);
+		__m128d tanh_a = tanh_pd(a);
+		__m128d gelu = _mm_mul_pd(
+			half,
+			_mm_mul_pd(x, _mm_add_pd(one, tanh_a))
+		);
+		_mm_store_pd(buffer+i, gelu);
+	}
+	for (;i<size;++i){
+		double x = output[i];
+		buffer[i] = 0.5*x*(1+tanh(s2p*(x+(GELU_C*pow(x,3)))));
+	}
+#else
+	double x;
+	const double s2p  = sqrtf(2/M_PI);
 	for (uint64_t i = 0;i<size;++i){
 		x = output[i];
 		buffer[i] = 0.5*x*(1+tanh(s2p*(x+(GELU_C*pow(x,3)))));
 	}
+#endif
 }
 
 void
 activation_selu(double* const buffer, const double* const output, uint64_t size, double a){
+#ifdef __SSE__
+#else
+	double lambda_alpha = SELU_LAMBDA*SELU_ALPHA;
 	for (uint64_t i = 0;i<size;++i){
 		double x = output[i];
 		if (x > 0){
 			buffer[i] = SELU_LAMBDA * x;
 			continue;
 		}
-		buffer[i] = SELU_LAMBDA*SELU_ALPHA*(expf(x)-1);
+		buffer[i] = lambda_alpha*(expf(x)-1);
 	}
+#endif
 }
 
 void
