@@ -5,11 +5,10 @@
 #include <math.h>
 #include <stddef.h>
 #include <stdlib.h>
+#include <immintrin.h>
 
 /* TODO
- * multithreading
  * SIMD
- * testing
  */
 
 static activation_function activations[] = {
@@ -1254,11 +1253,14 @@ network_show(network* const net){
 
 int
 main(int argc, char** argv){
+	set_seed(time(NULL));
 	pool mem = pool_alloc(TEMP_POOL_SIZE, POOL_STATIC);
 
 
 	layer* input = input_init(&mem, 32);
-	layer* hidden = layer_init(&mem, 64, ACTIVATION_RELU, 0);
+	layer* a = layer_init(&mem, 64, ACTIVATION_SIGMOID, 0);
+	layer* b = layer_init(&mem, 64, ACTIVATION_SIGMOID, 0);
+	layer* c = layer_init(&mem, 64, ACTIVATION_SIGMOID, 0);
 	layer* output = layer_init(&mem, 2, ACTIVATION_SIGMOID, 0);
 
 
@@ -1275,10 +1277,16 @@ main(int argc, char** argv){
 
 
 	uint64_t input_id = network_register_layer(&net, input);
-	uint64_t hidden_id = network_register_layer(&net, hidden);
+	uint64_t aid = network_register_layer(&net, a);
+	uint64_t bid = network_register_layer(&net, b);
+	uint64_t cid = network_register_layer(&net, c);
 	uint64_t output_id = network_register_layer(&net, output);
 	layer_link(&net, &mem, input_id, output_id);
-	layer_insert(&net, &mem, input_id, hidden_id, output_id);
+	layer_insert(&net, &mem, input_id, cid, output_id);
+	layer_insert(&net, &mem, input_id, bid, cid);
+	layer_insert(&net, &mem, input_id, aid, bid);
+	layer_link(&net, &mem, cid, aid);
+	layer_link(&net, &mem, bid, output_id);
 
 
 	network_build(&net);
@@ -1306,6 +1314,9 @@ main(int argc, char** argv){
 	}
 
 	network_train(&net, training_data, 128, expected);
+
+	prediction_vector vec = predict_vector_batched(&net, &mem, &training_data, 1, 32, net.input->data.input.width);
+	printf("predicted %lu (%lf) \n", vec.class[0], vec.probability[0]);
 
 	pool_dealloc(&mem);
 	return 0;
