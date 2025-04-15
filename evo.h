@@ -5,6 +5,8 @@
 #include <time.h>
 #include <stdio.h>
 
+#define SSE_ALIGNMENT 16
+
 #define TEMP_POOL_SIZE 0x1000000
 #define GELU_C 0.044715
 #define SELU_LAMBDA 1.0507009873554804934193349852946

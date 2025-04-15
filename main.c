@@ -5,11 +5,10 @@
 #include <math.h>
 #include <stddef.h>
 #include <stdlib.h>
-#include <immintrin.h>
 
-/* TODO
- * SIMD
- */
+#ifdef __SSE__
+#include <xmmintrin.h>
+#endif
 
 static activation_function activations[] = {
 	activation_sigmoid,
@@ -92,7 +91,11 @@ network_init(
 		.node_capacity = 2,
 		.input = input,
 		.output = output,
+#ifdef __SSE__
+		.loss_output = pool_request_aligned(mem, sizeof(double)*output->data.layer.width, SSE_ALIGNMENT),
+#else
 		.loss_output = pool_request(mem, sizeof(double)*output->data.layer.width),
+#endif
 		.loss = l,
 		.derivative=l,
 		.bias = bias,
@@ -134,7 +137,11 @@ layer*
 input_init(pool* const mem, uint64_t width){
 	layer* input = pool_request(mem, sizeof(layer));
 	input->tag = INPUT_NODE;
+#ifdef __SSE__
+	input->data.input.output = pool_request_aligned(mem, sizeof(double)*width, SSE_ALIGNMENT);
+#else
 	input->data.input.output = pool_request(mem, sizeof(double)*width);
+#endif
 	input->data.input.width = width;
 	input->prev = NULL;
 	input->prev_count = 0;
@@ -152,13 +159,21 @@ layer*
 layer_init(pool* const mem, uint64_t width, ACTIVATION_FUNC activation, uint64_t parameter_a){
 	layer* node = pool_request(mem, sizeof(layer));
 	node->tag = LAYER_NODE;
-	node->data.layer.output = pool_request(mem, sizeof(double)*width);
-	node->data.layer.activated = pool_request(mem, sizeof(double)*width);
 	node->data.layer.width = width;
 	node->data.layer.weights = NULL;
+#ifdef __SSE__
+	node->data.layer.output = pool_request_aligned(mem, sizeof(double)*width, SSE_ALIGNMENT);
+	node->data.layer.activated = pool_request_aligned(mem, sizeof(double)*width, SSE_ALIGNMENT);
+	node->data.layer.bias = pool_request_aligned(mem, sizeof(double)*width, SSE_ALIGNMENT);
+	node->data.layer.bias_gradients = pool_request_aligned(mem, sizeof(double)*width, SSE_ALIGNMENT);
+	node->data.layer.activation_gradients = pool_request_aligned(mem, sizeof(double)*width, SSE_ALIGNMENT);
+#else
+	node->data.layer.output = pool_request(mem, sizeof(double)*width);
+	node->data.layer.activated = pool_request(mem, sizeof(double)*width);
 	node->data.layer.bias = pool_request(mem, sizeof(double)*width);
 	node->data.layer.bias_gradients = pool_request(mem, sizeof(double)*width);
 	node->data.layer.activation_gradients = pool_request(mem, sizeof(double)*width);
+#endif
 	node->data.layer.activation = activation;
 	node->data.layer.derivative = activation;
 	node->data.layer.parameter_a = parameter_a;
@@ -317,16 +332,26 @@ allocate_weights(network* const net, pool* const mem, layer* const node, uint64_
 		}
 		return;
 	}
+#ifdef __SSE__
+	node->data.layer.weights = pool_request_aligned(mem, sizeof(double*)*node->data.layer.width, SSE_ALIGNMENT);
+	node->data.layer.weight_gradients = pool_request_aligned(mem, sizeof(double)*node->data.layer.width, SSE_ALIGNMENT);
+#else
 	node->data.layer.weights = pool_request(mem, sizeof(double*)*node->data.layer.width);
 	node->data.layer.weight_gradients = pool_request(mem, sizeof(double)*node->data.layer.width);
+#endif
 	uint64_t sum = 0;
 	for (uint64_t i = 0;i<node->prev_count;++i){
 		layer* prev = net->nodes[node->prev[i]];
 		sum += prev->data.layer.width;
 	}
 	for (uint64_t i = 0;i<node->data.layer.width;++i){
+#ifdef __SSE__
+		node->data.layer.weights[i] = pool_request_aligned(mem, sizeof(double)*sum, SSE_ALIGNMENT);
+		node->data.layer.weight_gradients[i] = pool_request_aligned(mem, sizeof(double)*sum, SSE_ALIGNMENT);
+#else
 		node->data.layer.weights[i] = pool_request(mem, sizeof(double)*sum);
 		node->data.layer.weight_gradients[i] = pool_request(mem, sizeof(double)*sum);
+#endif
 	}
 	for (uint64_t i = 0;i<node->next_count;++i){
 		allocate_weights(net, mem, net->nodes[node->next[i]], pass_index);
@@ -380,7 +405,11 @@ backward(network* const net, layer* const node){
 		return;
 	}
 	pool_empty(&net->temp);
+#ifdef __SSE__
+	double* dadz = pool_request_aligned(&net->temp, sizeof(double)*node->data.layer.width, SSE_ALIGNMENT);
+#else
 	double* dadz = pool_request(&net->temp, sizeof(double)*node->data.layer.width);
+#endif
 	double* dcda = node->data.layer.activation_gradients;
 	activation_partials[node->data.layer.derivative](
 		dadz,
@@ -1067,25 +1096,49 @@ load_nodes(network* const net, pool* const mem, FILE* infile){
 	uint64_t err = fread(&node->tag, sizeof(uint8_t), 1, infile);
 	while (err != 0){
 		fread(&node->data.layer.width, sizeof(uint64_t), 1, infile);
+#ifdef __SSE__
+		node->data.layer.output = pool_request_aligned(mem, sizeof(double)*node->data.layer.width, SSE_ALIGNMENT);
+#else
 		node->data.layer.output = pool_request(mem, sizeof(double)*node->data.layer.width);
+#endif
 		if (node->tag == LAYER_NODE){
 			uint64_t sum;
 			fread(&sum, sizeof(uint64_t), 1, infile);
+#ifdef __SSE__
+			node->data.layer.weights = pool_request_aligned(mem, sizeof(double*)*node->data.layer.width, SSE_ALIGNMENT);
+			node->data.layer.weight_gradients = pool_request_aligned(mem, sizeof(double*)*node->data.layer.width, SSE_ALIGNMENT);
+#else
 			node->data.layer.weights = pool_request(mem, sizeof(double*)*node->data.layer.width);
 			node->data.layer.weight_gradients = pool_request(mem, sizeof(double*)*node->data.layer.width);
+#endif
 			for (uint64_t i = 0;i<node->data.layer.width;++i){
+#ifdef __SSE__
+				node->data.layer.weights[i] = pool_request_aligned(mem, sizeof(double)*sum, SSE_ALIGNMENT);
+				node->data.layer.weight_gradients[i] = pool_request_aligned(mem, sizeof(double)*sum, SSE_ALIGNMENT);
+#else
 				node->data.layer.weights[i] = pool_request(mem, sizeof(double)*sum);
 				node->data.layer.weight_gradients[i] = pool_request(mem, sizeof(double)*sum);
+#endif
 				fread(&node->data.layer.weights[i], sizeof(double), sum, infile);
 			}
+#ifdef __SSE__
+			node->data.layer.bias = pool_request_aligned(mem, sizeof(double)*node->data.layer.width, SSE_ALIGNMENT);
+#else
 			node->data.layer.bias = pool_request(mem, sizeof(double)*node->data.layer.width);
+#endif
 			fread(&node->data.layer.bias, sizeof(double), node->data.layer.width, infile);
 			fread(&node->data.layer.activation, sizeof(ACTIVATION_FUNC), 1, infile);
 			fread(&node->data.layer.derivative, sizeof(ACTIVATION_PARTIAL_FUNC), 1, infile);
 			fread(&node->data.layer.parameter_a, sizeof(uint64_t), 1, infile);
+#ifdef __SSE__
+			node->data.layer.activated = pool_request_aligned(mem, sizeof(double)*node->data.layer.width, SSE_ALIGNMENT);
+			node->data.layer.bias_gradients = pool_request_aligned(mem, sizeof(double)*node->data.layer.width, SSE_ALIGNMENT);
+			node->data.layer.activation_gradients = pool_request_aligned(mem, sizeof(double)*node->data.layer.width, SSE_ALIGNMENT);
+#else
 			node->data.layer.activated = pool_request(mem, sizeof(double)*node->data.layer.width);
 			node->data.layer.bias_gradients = pool_request(mem, sizeof(double)*node->data.layer.width);
 			node->data.layer.activation_gradients = pool_request(mem, sizeof(double)*node->data.layer.width);
+#endif
 		}
 		else {
 			net->input = node;
@@ -1153,7 +1206,11 @@ load_network(pool* const mem, const char* filename){
 	net.nodes = pool_request(mem, sizeof(uint64_t)*net.node_capacity);
 	load_nodes(&net, mem, infile);
 	fclose(infile);
+#ifdef __SSE__
+	net.loss_output = pool_request_aligned(mem, sizeof(double)*net.input->data.input.width, SSE_ALIGNMENT);
+#else
 	net.loss_output = pool_request(mem, sizeof(double)*net.input->data.input.width);
+#endif
 	for (uint64_t i = 0;i<net.node_count;++i){
 		layer* node = net.nodes[i];
 		for (uint64_t k = 0;k<node->next_count;++k){
