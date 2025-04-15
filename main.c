@@ -205,6 +205,23 @@ layer_link(network* const net, pool* const mem, uint64_t a, uint64_t b){
 }
 
 void
+layer_link_backward(network* const net, pool* const mem, uint64_t a, uint64_t b){
+	assert(a < net->node_count);
+	assert(b < net->node_count);
+	layer* node_b = net->nodes[b];
+	if (node_b->prev_count == node_b->prev_capacity){
+		uint64_t* new = pool_request(mem, sizeof(uint64_t)*node_b->prev_capacity*2);
+		for (uint64_t i = 0;i<node_b->prev_capacity;++i){
+			new[i] = node_b->prev[i];
+		}
+		node_b->prev = new;
+		node_b->prev_capacity *= 2;
+	}
+	node_b->prev[node_b->prev_count] = a;
+	node_b->prev_count += 1;
+}
+
+void
 layer_unlink(network* const net, uint64_t a, uint64_t b){
 	assert(a < net->node_count);
 	assert(b < net->node_count);
@@ -1046,7 +1063,7 @@ load_nodes(network* const net, pool* const mem, FILE* infile){
 			node->data.layer.weight_gradients = pool_request(mem, sizeof(double*)*node->data.layer.width);
 			for (uint64_t i = 0;i<node->data.layer.width;++i){
 				node->data.layer.weights[i] = pool_request(mem, sizeof(double)*sum);
-				node->data.layer.weights[i] = pool_request(mem, sizeof(double)*sum);
+				node->data.layer.weight_gradients[i] = pool_request(mem, sizeof(double)*sum);
 				fread(&node->data.layer.weights[i], sizeof(double), sum, infile);
 			}
 			node->data.layer.bias = pool_request(mem, sizeof(double)*node->data.layer.width);
@@ -1074,6 +1091,7 @@ load_nodes(network* const net, pool* const mem, FILE* infile){
 		node->prev_capacity = 2;
 		node->prev = pool_request(mem, sizeof(uint64_t)*2);
 		network_register_layer(net, node);
+		node = pool_request(mem, sizeof(layer));
 		err = fread(&node->tag, sizeof(uint8_t), 1, infile);
 	}
 }
@@ -1093,7 +1111,6 @@ write_network(network* const net, const char* filename){
 	fwrite(&net->weight_parameter_b, sizeof(double), 1, outfile);
 	fwrite(&net->bias_parameter_a, sizeof(double), 1, outfile);
 	fwrite(&net->bias_parameter_b, sizeof(double), 1, outfile);
-	fwrite(&net->node_count, sizeof(uint64_t), 1, outfile);
 	fwrite(&net->node_capacity, sizeof(uint64_t), 1, outfile);
 	for (uint64_t i = 0;i<net->node_count;++i){
 		write_node(net, net->nodes[i], outfile);
@@ -1120,7 +1137,6 @@ load_network(pool* const mem, const char* filename){
 	fread(&net.weight_parameter_b, sizeof(double), 1, infile);
 	fread(&net.bias_parameter_a, sizeof(double), 1, infile);
 	fread(&net.bias_parameter_b, sizeof(double), 1, infile);
-	fread(&net.node_count, sizeof(uint64_t), 1, infile);
 	fread(&net.node_capacity, sizeof(uint64_t), 1, infile);
 	net.nodes = pool_request(mem, sizeof(uint64_t)*net.node_capacity);
 	load_nodes(&net, mem, infile);
@@ -1129,7 +1145,7 @@ load_network(pool* const mem, const char* filename){
 	for (uint64_t i = 0;i<net.node_count;++i){
 		layer* node = net.nodes[i];
 		for (uint64_t k = 0;k<node->next_count;++k){
-			layer_link(&net, mem, i, node->next[k]);
+			layer_link_backward(&net, mem, i, node->next[k]);
 		}
 	}
 	sort_connections(&net, NULL, net.input, net.input->pass_index+1);
@@ -1201,6 +1217,28 @@ predict_vector_batched(network* const net, pool* const mem, double*** input, uin
 	return pred;
 }
 
+void
+network_show(network* const net){
+	for (uint64_t i = 0;i<net->node_count;++i){
+		printf("layer node %lu:\n", i);
+		layer* node = net->nodes[i];
+		if (node->tag == INPUT_NODE){
+			printf("(input)\n");
+		}
+		else if (node->next_count == 0){
+			printf("(output)\n");
+		}
+		printf("neurons: %lu\n", node->data.layer.width);
+		for (uint64_t k = 0;k<node->next_count;++k){
+			printf(" * -> %lu\n", node->next[k]);
+		}
+		for (uint64_t k = 0;k<node->prev_count;++k){
+			printf(" %lu -> * \n", node->prev[k]);
+		}
+		printf("\n");
+	}
+}
+
 int
 main(int argc, char** argv){
 	pool mem = pool_alloc(TEMP_POOL_SIZE, POOL_STATIC);
@@ -1229,8 +1267,13 @@ main(int argc, char** argv){
 
 
 	network_build(&net);
+	network_show(&net);
 
-	printf("network built\n");
+	write_network(&net, "test.mdl");
+	printf("wrote\n");
+	network copy = load_network(&mem, "test.mdl");
+	printf("loaded\n");
+	network_show(&copy);
 
 	pool_dealloc(&mem);
 	return 0;

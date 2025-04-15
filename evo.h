@@ -145,6 +145,7 @@ void network_build(network* const net);
 layer* input_init(pool* const mem, uint64_t width);
 layer* layer_init(pool* const mem, uint64_t width, ACTIVATION_FUNC activation, uint64_t parameter_a);
 void layer_link(network* const net, pool* const mem, uint64_t a, uint64_t b);
+void layer_link_backward(network* const net, pool* const mem, uint64_t a, uint64_t b);
 void layer_unlink(network* const net, uint64_t a, uint64_t b);
 void layer_insert(network* const net, pool* const mem, uint64_t a, uint64_t b, uint64_t c);
 void reset_simulation_flags(network* const net, layer* const node);
@@ -231,5 +232,7 @@ typedef struct prediction_vector {
 prediction predict(network* const net, double* input, uint64_t len);
 prediction_vector predict_vector(network* const net, pool* const mem, double** input, uint64_t vector_len, uint64_t len);
 prediction_vector predict_vector_batched(network* const net, pool* const mem, double*** input, uint64_t sample_count, uint64_t vector_len, uint64_t len);
+
+void network_show(network* const net);
 
 #endif
