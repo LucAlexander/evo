@@ -1384,13 +1384,8 @@ activation_elu(double* const buffer, const double* const output, uint64_t size, 
 	for (i=0;i+DOUBLE_DIV<=size;i+=DOUBLE_DIV){
 		__m128d x = _mm_load_pd(output+i);
 		__m128d mask = _mm_cmplt_pd(x, zero);
-#ifdef nm_sse4_1
-		__m128d negs = _mm_mul_pd(alpha, _mm_sub_pd(exp_neg_pd(x), one));
-		__m128d term = _mm_blendv_pd(x, negs, mask);
-#else
 		__m128d negs = _mm_and_pd(mask, _mm_mul_pd(alpha, _mm_sub_pd(exp_neg_pd(x), one)));
 		__m128d term = _mm_add_pd(_mm_andnot_pd(mask, x), negs);
-#endif
 		_mm_store_pd(buffer+i, term);
 	}
 	for (;i<size;++i){
@@ -1523,6 +1518,30 @@ activation_gelu(double* const buffer, const double* const output, uint64_t size,
 void
 activation_selu(double* const buffer, const double* const output, uint64_t size, double a){
 #ifdef __SSE__
+	const __m128d lam = _mm_set1_pd(SELU_LAMBDA);
+	const __m128d alf = _mm_set1_pd(SELU_ALPHA);
+	const __m128d one = _mm_set1_pd(1.0f);
+	const __m128d lamalf = _mm_mul_pd(lam, alf);
+	const __m128d zero = _mm_setzero_pd();
+	uint64_t i;
+	for (i = 0;i+DOUBLE_DIV<=size;i+=DOUBLE_DIV){
+		__m128d x = _mm_load_pd(output+i);
+		__m128d xl = _mm_mul_pd(x, lam);
+		_mm_store_pd(buffer+i, xl);
+		__m128d mask = _mm_cmpgt_pd(zero, x);
+		__m128d negs = _mm_and_pd(mask, _mm_mul_pd(lamalf, _mm_sub_pd(exp_neg_pd(x), one)));
+		__m128d term = _mm_add_pd(_mm_andnot_pd(mask, x), negs);
+		_mm_store_pd(buffer+i, term);
+	}
+	double lambda_alpha = SELU_LAMBDA*SELU_ALPHA;
+	for (i = 0;i<size;++i){
+		double x = output[i];
+		if (x > 0){
+			buffer[i] = SELU_LAMBDA * x;
+			continue;
+		}
+		buffer[i] = lambda_alpha*(expf(x)-1);
+	}
 #else
 	double lambda_alpha = SELU_LAMBDA*SELU_ALPHA;
 	for (uint64_t i = 0;i<size;++i){
