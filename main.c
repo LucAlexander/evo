@@ -1805,6 +1805,7 @@ load_nodes(network* const net, pool* const mem, FILE* infile){
 		node->simulated = 0;
 		node->prev_count = 0;
 		node->prev_capacity = 2;
+		node->data.layer.gradient_count = 0;
 		node->prev = pool_request(mem, sizeof(uint64_t)*2);
 		network_register_layer(net, node);
 		node = pool_request(mem, sizeof(layer));
