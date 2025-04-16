@@ -113,6 +113,7 @@ typedef struct layer {
 			double* bias_gradients;
 			double* activation_gradients;
 			double parameter_a;
+			uint64_t gradient_count;
 		} layer;
 		struct {
 			uint64_t width;
@@ -165,6 +166,7 @@ void forward(network* const net, layer* const node, uint64_t pass_index);
 void backward(network* const net, layer* const node);
 void apply_gradients(network* const net, layer* const node, uint64_t pass_index);
 void zero_gradients(network* const net, layer* const node, uint64_t pass_index);
+void clear_activation_gradients(network* const net, layer* const node, uint64_t pass_index);
 void network_train(network* const net, double** data, uint64_t data_size, double** expected);
 void init_params(network* const net, layer* const node, uint64_t pass_index);
 

@@ -173,6 +173,7 @@ layer_init(pool* const mem, uint64_t width, ACTIVATION_FUNC activation, uint64_t
 	node->data.layer.activation = activation;
 	node->data.layer.derivative = activation;
 	node->data.layer.parameter_a = parameter_a;
+	node->data.layer.gradient_count = 0;
 	node->prev = pool_request(mem, 2*sizeof(uint64_t));
 	node->prev_count = 0;
 	node->prev_capacity = 2;
@@ -407,6 +408,7 @@ backward(network* const net, layer* const node){
 	double* dadz = pool_request(&net->temp, sizeof(double)*node->data.layer.width);
 #endif
 	double* dcda = node->data.layer.activation_gradients;
+	node->data.layer.gradient_count += 1;
 	activation_partials[node->data.layer.derivative](
 		dadz,
 		node->data.layer.output,
@@ -439,6 +441,7 @@ backward(network* const net, layer* const node){
 	for (uint64_t i = 0;i<node->prev_count;++i){
 		layer* prev = net->nodes[node->prev[i]];
 		if (prev->tag == INPUT_NODE){
+			weight_index += prev->data.input.width;
 			continue;
 		}
 		for (uint64_t k = 0;k<prev->next_count;++k){
@@ -480,7 +483,7 @@ apply_gradients(network* const net, layer* const node, uint64_t pass_index){
 		return;
 	}
 	for (uint64_t i = 0;i<node->data.layer.width;++i){
-		double average = (node->data.layer.bias_gradients[i]/net->batch_size);
+		double average = (node->data.layer.bias_gradients[i]/node->data.layer.gradient_count);
 		node->data.layer.bias[i] -= net->learning_rate * average;
 		node->data.layer.bias_gradients[i] = 0;
 		node->data.layer.activation_gradients[i] = 0;
@@ -494,7 +497,7 @@ apply_gradients(network* const net, layer* const node, uint64_t pass_index){
 				continue;
 			}
 			for (uint64_t k = 0;k<prev->data.layer.width;++k){
-				double average = (node->data.layer.weight_gradients[i][weight_index]/net->batch_size);
+				double average = (node->data.layer.weight_gradients[i][weight_index]/node->data.layer.gradient_count);
 				node->data.layer.weights[i][weight_index] -= net->learning_rate * average;
 				node->data.layer.weight_gradients[i][weight_index] = 0;
 				weight_index += 1;
@@ -522,6 +525,7 @@ zero_gradients(network* const net, layer* const node, uint64_t pass_index){
 		node->data.layer.bias_gradients[i] = 0;
 		node->data.layer.activation_gradients[i] = 0;
 	}
+	node->data.layer.gradient_count = 0;
 	for (uint64_t i = 0;i<node->data.layer.width;++i){
 		uint64_t weight_index = 0;
 		for (uint64_t p = 0;p<node->prev_count;++p){
@@ -538,6 +542,26 @@ zero_gradients(network* const net, layer* const node, uint64_t pass_index){
 	}
 	for (uint64_t i = 0;i<node->next_count;++i){
 		zero_gradients(net, net->nodes[node->next[i]], pass_index);
+	}
+}
+
+void
+clear_activation_gradients(network* const net, layer* const node, uint64_t pass_index){
+	if (node->pass_index >= pass_index){
+		return;
+	}
+	node->pass_index += 1;
+	if (node->tag == INPUT_NODE){
+		for (uint64_t i = 0;i<node->next_count;++i){
+			clear_activation_gradients(net, net->nodes[node->next[i]], pass_index);
+		}
+		return;
+	}
+	for (uint64_t i = 0;i<node->data.layer.width;++i){
+		node->data.layer.activation_gradients[i] = 0;
+	}
+	for (uint64_t i = 0;i<node->next_count;++i){
+		clear_activation_gradients(net, net->nodes[node->next[i]], pass_index);
 	}
 }
 
@@ -569,6 +593,8 @@ network_train(network* const net, double** data, uint64_t data_size, double** ex
 				net->loss_parameter_a
 			);
 			backward(net, net->output);
+			clear_activation_gradients(net, net->input, pass);
+			pass += 1;
 		}
 		apply_gradients(net, net->input, pass);
 		pass += 1;
