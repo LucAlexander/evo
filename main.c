@@ -453,6 +453,7 @@ backward(network* const net, layer* const node){
 			break;
 		}
 	}
+	memset(node->data.layer.activation_gradients, 0, node->data.layer.width*sizeof(double));
 	if (node->prev_count > 1){
 		if (node->branched == 1){
 			backward(net, net->nodes[node->prev[node->back_direction]]);
@@ -1802,11 +1803,11 @@ main(int argc, char** argv){
 
 
 
-	layer* input = input_init(&mem, 32);
+	layer* input = input_init(&mem, 8);
 	layer* a = layer_init(&mem, 64, ACTIVATION_SIGMOID, 0);
 	layer* b = layer_init(&mem, 64, ACTIVATION_SIGMOID, 0);
 	layer* c = layer_init(&mem, 64, ACTIVATION_SIGMOID, 0);
-	layer* output = layer_init(&mem, 2, ACTIVATION_SIGMOID, 0);
+	layer* output = layer_init(&mem, 8, ACTIVATION_SIGMOID, 0);
 
 
 	network net = network_init(
@@ -1816,7 +1817,7 @@ main(int argc, char** argv){
 		BIAS_INITIALIZATION_ZERO,
 		1, 2,
 		0, 0,
-		32, 0.000001,
+		16, 0.0000001,
 		LOSS_MSE
 	);
 
@@ -1844,23 +1845,37 @@ main(int argc, char** argv){
 	network_show(&copy);
 
 	double** training_data = pool_request(&mem, sizeof(double*)*128);
+	uint8_t pos = 0;
 	for (uint32_t i = 0;i<128;++i){
 		training_data[i] = pool_request(&mem, sizeof(double)*net.input->data.input.width);
 		for (uint32_t k = 0;k<net.input->data.input.width;++k){
-			training_data[i][k] = random();
+			training_data[i][k] = 0;
+		}
+		training_data[i][pos] = 1;
+		pos += 1;
+		if (pos == 8){
+			pos = 0;
 		}
 	}
+	pos = 0;
 	double** expected = pool_request(&mem, sizeof(double*)*128);
 	for (uint32_t i = 0;i<128;++i){
 		expected[i] = pool_request(&mem, sizeof(double)*net.input->data.input.width);
-		for (uint32_t k = 0;k<net.input->data.input.width;++k){
-			expected[i][k] = random();
+		for (uint32_t k = 0;k<net.output->data.layer.width;++k){
+			expected[i][k] = 0;
+		}
+		expected[i][pos] = 1;
+		pos += 1;
+		if (pos == 8){
+			pos = 0;
 		}
 	}
 
-	network_train(&net, training_data, 128, expected);
+	for (uint64_t i = 0;i<100;++i){
+		network_train(&net, training_data, 128, expected);
+	}
 
-	prediction_vector vec = predict_vector_batched(&net, &mem, &training_data, 1, 32, net.input->data.input.width);
+	prediction_vector vec = predict_vector_batched(&net, &mem, &training_data, 1, net.batch_size, net.input->data.input.width);
 	printf("predicted %lu (%lf) \n", vec.class[0], vec.probability[0]);
 
 	pool_dealloc(&mem);
