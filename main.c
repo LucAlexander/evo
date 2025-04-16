@@ -77,6 +77,7 @@ network_init(
 	double weight_a, double weight_b,
 	double bias_a, double bias_b,
 	uint64_t batch_size, double learning_rate,
+	double clamp,
 	LOSS_FUNC l
 ){
 	network net = {
@@ -101,7 +102,8 @@ network_init(
 		.weight_parameter_a = weight_a,
 		.weight_parameter_b = weight_b,
 		.bias_parameter_a= bias_a,
-		.bias_parameter_b= bias_b
+		.bias_parameter_b= bias_b,
+		.gradient_clamp = clamp
 	};
 	return net;
 }
@@ -380,6 +382,9 @@ forward(network* const net, layer* const node, uint64_t pass_index){
 			for (uint64_t k = 0;k<prev->data.layer.width;++k){
 				double w = node->data.layer.weights[i][weight_index];
 				node->data.layer.output[i] += prev->data.layer.activated[k] * w;
+				assert(!isnan(w));
+				assert(!isnan(prev->data.layer.activated[k]));
+				assert(!isnan(node->data.layer.output[i]));
 				weight_index += 1;
 			}
 		}
@@ -393,6 +398,28 @@ forward(network* const net, layer* const node, uint64_t pass_index){
 	node->simulated = 1;
 	for (uint64_t i = 0;i<node->next_count;++i){
 		forward(net, net->nodes[node->next[i]], pass_index);
+	}
+}
+
+void
+clamp_gradients(network* const net, double* const vector, uint64_t size){
+	for (uint64_t i = 0;i<size;++i){
+		if (vector[i] > net->gradient_clamp){
+			vector[i] = net->gradient_clamp;
+		}
+		if (vector[i] < -net->gradient_clamp){
+			vector[i] = -net->gradient_clamp;
+		}
+	}
+}
+
+void
+clamp_gradient(network* const net, double* item){
+	if (*item > net->gradient_clamp){
+		*item = net->gradient_clamp;
+	}
+	if (*item < -net->gradient_clamp){
+		*item = -net->gradient_clamp;
 	}
 }
 
@@ -418,6 +445,7 @@ backward(network* const net, layer* const node){
 	for (uint64_t i = 0;i<node->data.layer.width;++i){
 		node->data.layer.bias_gradients[i] += 1 * dadz[i] * dcda[i];
 	}
+	clamp_gradients(net, node->data.layer.bias_gradients, node->data.layer.width);
 	for (uint64_t i = 0;i<node->data.layer.width;++i){
 		uint64_t weight_index = 0;
 		for (uint64_t p = 0;p<node->prev_count;++p){
@@ -426,6 +454,11 @@ backward(network* const net, layer* const node){
 				for (uint64_t k = 0;k<prev->data.layer.width;++k){
 					double dzdw = prev->data.input.output[k];
 					node->data.layer.weight_gradients[i][weight_index] += dzdw * dadz[i] * dcda[i];
+					clamp_gradient(net, &node->data.layer.weight_gradients[i][weight_index]);
+					assert(!isnan(dzdw));
+					assert(!isnan(dadz[i]));
+					assert(!isnan(dcda[i]));
+					assert(!isnan(node->data.layer.weight_gradients[i][weight_index]));
 					weight_index += 1;
 				}
 				continue;
@@ -433,6 +466,7 @@ backward(network* const net, layer* const node){
 			for (uint64_t k = 0;k<prev->data.layer.width;++k){
 				double dzdw = prev->data.layer.activated[k];
 				node->data.layer.weight_gradients[i][weight_index] += dzdw * dadz[i] * dcda[i];
+				clamp_gradient(net, &node->data.layer.weight_gradients[i][weight_index]);
 				weight_index += 1;
 			}
 		}
@@ -452,9 +486,14 @@ backward(network* const net, layer* const node){
 				for (uint64_t n = 0;n<node->data.layer.width;++n){
 					double w = node->data.layer.weights[n][weight_index];
 					prev->data.layer.activation_gradients[t] += w * dadz[n] * dcda[n];
+					assert(!isnan(w));
+					assert(!isnan(dadz[n]));
+					assert(!isnan(dcda[n]));
+					assert(!isnan(prev->data.layer.activation_gradients[t]));
 				}
 				weight_index += 1;
 			}
+			clamp_gradients(net, prev->data.layer.activation_gradients, prev->data.layer.width);
 			break;
 		}
 	}
@@ -482,6 +521,7 @@ apply_gradients(network* const net, layer* const node, uint64_t pass_index){
 		}
 		return;
 	}
+	assert(node->data.layer.gradient_count != 0);
 	for (uint64_t i = 0;i<node->data.layer.width;++i){
 		double average = (node->data.layer.bias_gradients[i]/node->data.layer.gradient_count);
 		node->data.layer.bias[i] -= net->learning_rate * average;
@@ -507,6 +547,7 @@ apply_gradients(network* const net, layer* const node, uint64_t pass_index){
 	for (uint64_t i = 0;i<node->next_count;++i){
 		apply_gradients(net, net->nodes[node->next[i]], pass_index);
 	}
+	node->data.layer.gradient_count = 0;
 }
 
 void
@@ -521,11 +562,11 @@ zero_gradients(network* const net, layer* const node, uint64_t pass_index){
 		}
 		return;
 	}
+	node->data.layer.gradient_count = 0;
 	for (uint64_t i = 0;i<node->data.layer.width;++i){
 		node->data.layer.bias_gradients[i] = 0;
 		node->data.layer.activation_gradients[i] = 0;
 	}
-	node->data.layer.gradient_count = 0;
 	for (uint64_t i = 0;i<node->data.layer.width;++i){
 		uint64_t weight_index = 0;
 		for (uint64_t p = 0;p<node->prev_count;++p){
@@ -573,18 +614,19 @@ network_train(network* const net, double** data, uint64_t data_size, double** ex
 	pass += 1;
 	uint64_t i = 0;
 	while (i<data_size){
+		double loss = 0;
 		for (uint64_t k = i;i<k+net->batch_size;++i){
 			memcpy(net->input->data.input.output, data[i], net->input->data.input.width*sizeof(double));
 			forward(net, net->input, pass);
 			pass += 1;
-			double loss = losses[net->loss](
+			loss += losses[net->loss](
 				net->loss_output,
 				net->output->data.layer.activated,
 				expected[i],
 				net->output->data.layer.width,
 				net->loss_parameter_a
 			);
-			printf("loss: %lf\n", loss);
+			assert(!isnan(loss));
 			loss_partials[net->derivative](
 				net->output->data.layer.activation_gradients,
 				net->output->data.layer.activated,
@@ -599,6 +641,7 @@ network_train(network* const net, double** data, uint64_t data_size, double** ex
 		apply_gradients(net, net->input, pass);
 		pass += 1;
 		reset_simulation_flags(net, net->input);
+		printf("loss: %lf\n", loss/net->batch_size);
 	}
 }
 
@@ -722,6 +765,8 @@ loss_mse_partial(double* const output, const double* const result, const double*
 #ifdef __SSE__
 	for (uint64_t i = 0;i<size;++i){
 		output[i] = 2*(result[i]-expected[i]);
+		assert(!isnan(output[i]));
+		assert(!isnan(expected[i]));
 	}
 #else
 	for (uint64_t i = 0;i<size;++i){
@@ -844,6 +889,7 @@ void
 activation_sigmoid_partial(double* const output, const double* const buffer, uint64_t size, double a){
 #ifdef __SSE__
 	for (uint64_t i = 0;i<size;++i){
+		assert(!isnan(buffer[i]));
 		double fx = 1/(1+expf(-buffer[i]));
 		output[i] = fx*(1-fx);
 	}
@@ -1075,6 +1121,8 @@ loss_mse(double* const buffer, const double* const result, const double* const e
 		double loss = expected[i]-result[i];
 		buffer[i] = loss;
 		sum += loss*loss;
+		assert(!isnan(expected[i]));
+		assert(!isnan(result[i]));
 	}
 	return (sum)/(size);
 #else
@@ -1374,6 +1422,8 @@ activation_sigmoid(double* const buffer, const double* const output, uint64_t si
 	}
 	for (;i<size;++i){
 		buffer[i] = 1/(1+expf(-output[i]));
+		assert(!isnan(output[i]));
+		assert(!isnan(buffer[i]));
 	}
 #else
 	for (uint64_t i = 0;i<size;++i){
@@ -1797,6 +1847,7 @@ write_network(network* const net, const char* filename){
 	fwrite(&net->bias_parameter_a, sizeof(double), 1, outfile);
 	fwrite(&net->bias_parameter_b, sizeof(double), 1, outfile);
 	fwrite(&net->node_capacity, sizeof(uint64_t), 1, outfile);
+	fwrite(&net->gradient_clamp, sizeof(double), 1, outfile);
 	for (uint64_t i = 0;i<net->node_count;++i){
 		write_node(net, net->nodes[i], outfile);
 	}
@@ -1823,6 +1874,7 @@ load_network(pool* const mem, const char* filename){
 	fread(&net.bias_parameter_a, sizeof(double), 1, infile);
 	fread(&net.bias_parameter_b, sizeof(double), 1, infile);
 	fread(&net.node_capacity, sizeof(uint64_t), 1, infile);
+	fread(&net.gradient_clamp, sizeof(double), 1, infile);
 	net.nodes = pool_request(mem, sizeof(uint64_t)*net.node_capacity);
 	load_nodes(&net, mem, infile);
 	fclose(infile);
@@ -1945,11 +1997,12 @@ main(int argc, char** argv){
 	network net = network_init(
 		&mem,
 		input, output,
-		WEIGHT_INITIALIZATION_NORMAL,
+		WEIGHT_INITIALIZATION_XAVIER,
 		BIAS_INITIALIZATION_ZERO,
 		1, 2,
 		0, 0,
-		16, 0.0000001,
+		16, 0.001,
+		5,
 		LOSS_MSE
 	);
 

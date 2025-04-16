@@ -148,9 +148,10 @@ typedef struct network {
 	double weight_parameter_b;
 	double bias_parameter_a;
 	double bias_parameter_b;
+	double gradient_clamp;
 } network;
 
-network network_init(pool* const mem, layer* const input, layer* const output, WEIGHT_FUNC w, BIAS_FUNC b, double weight_a, double weight_b, double bias_a, double bias_b, uint64_t batch_size, double learning_rate, LOSS_FUNC l);
+network network_init(pool* const mem, layer* const input, layer* const output, WEIGHT_FUNC w, BIAS_FUNC b, double weight_a, double weight_b, double bias_a, double bias_b, uint64_t batch_size, double learning_rate, double clamp, LOSS_FUNC l);
 uint64_t network_register_layer(network* const net, layer* const node);
 void network_build(network* const net);
 layer* input_init(pool* const mem, uint64_t width);
@@ -162,6 +163,8 @@ void layer_insert(network* const net, pool* const mem, uint64_t a, uint64_t b, u
 void reset_simulation_flags(network* const net, layer* const node);
 void sort_connections(network* const net, layer* const prev, layer* const node, uint64_t pass_index);
 void allocate_weights(network* const net, pool* const mem, layer* const node, uint64_t pass_index);
+void clamp_gradient(network* const net, double* item);
+void clamp_gradients(network* const net, double* const vector, uint64_t size);
 void forward(network* const net, layer* const node, uint64_t pass_index);
 void backward(network* const net, layer* const node);
 void apply_gradients(network* const net, layer* const node, uint64_t pass_index);
