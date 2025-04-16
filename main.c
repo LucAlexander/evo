@@ -435,6 +435,7 @@ backward(network* const net, layer* const node){
 			}
 		}
 	}
+	uint64_t weight_index = 0;
 	for (uint64_t i = 0;i<node->prev_count;++i){
 		layer* prev = net->nodes[node->prev[i]];
 		if (prev->tag == INPUT_NODE){
@@ -446,14 +447,14 @@ backward(network* const net, layer* const node){
 			}
 			for (uint64_t t = 0;t<prev->data.layer.width;++t){
 				for (uint64_t n = 0;n<node->data.layer.width;++n){
-					double w = node->data.layer.weights[n][i];
+					double w = node->data.layer.weights[n][weight_index];
 					prev->data.layer.activation_gradients[t] += w * dadz[n] * dcda[n];
 				}
+				weight_index += 1;
 			}
 			break;
 		}
 	}
-	memset(node->data.layer.activation_gradients, 0, node->data.layer.width*sizeof(double));
 	if (node->prev_count > 1){
 		if (node->branched == 1){
 			backward(net, net->nodes[node->prev[node->back_direction]]);
@@ -480,7 +481,7 @@ apply_gradients(network* const net, layer* const node, uint64_t pass_index){
 	}
 	for (uint64_t i = 0;i<node->data.layer.width;++i){
 		double average = (node->data.layer.bias_gradients[i]/net->batch_size);
-		node->data.layer.bias[i] += net->learning_rate * average;
+		node->data.layer.bias[i] -= net->learning_rate * average;
 		node->data.layer.bias_gradients[i] = 0;
 		node->data.layer.activation_gradients[i] = 0;
 	}
@@ -494,7 +495,7 @@ apply_gradients(network* const net, layer* const node, uint64_t pass_index){
 			}
 			for (uint64_t k = 0;k<prev->data.layer.width;++k){
 				double average = (node->data.layer.weight_gradients[i][weight_index]/net->batch_size);
-				node->data.layer.weights[i][weight_index] += net->learning_rate * average;
+				node->data.layer.weights[i][weight_index] -= net->learning_rate * average;
 				node->data.layer.weight_gradients[i][weight_index] = 0;
 				weight_index += 1;
 			}
@@ -1844,9 +1845,10 @@ main(int argc, char** argv){
 	printf("loaded\n");
 	network_show(&copy);
 
-	double** training_data = pool_request(&mem, sizeof(double*)*128);
+	uint64_t samples = 512;
+	double** training_data = pool_request(&mem, sizeof(double*)*samples);
 	uint8_t pos = 0;
-	for (uint32_t i = 0;i<128;++i){
+	for (uint32_t i = 0;i<samples;++i){
 		training_data[i] = pool_request(&mem, sizeof(double)*net.input->data.input.width);
 		for (uint32_t k = 0;k<net.input->data.input.width;++k){
 			training_data[i][k] = 0;
@@ -1858,9 +1860,9 @@ main(int argc, char** argv){
 		}
 	}
 	pos = 0;
-	double** expected = pool_request(&mem, sizeof(double*)*128);
-	for (uint32_t i = 0;i<128;++i){
-		expected[i] = pool_request(&mem, sizeof(double)*net.input->data.input.width);
+	double** expected = pool_request(&mem, sizeof(double*)*samples);
+	for (uint32_t i = 0;i<samples;++i){
+		expected[i] = pool_request(&mem, sizeof(double)*net.output->data.layer.width);
 		for (uint32_t k = 0;k<net.output->data.layer.width;++k){
 			expected[i][k] = 0;
 		}
@@ -1872,7 +1874,7 @@ main(int argc, char** argv){
 	}
 
 	for (uint64_t i = 0;i<100;++i){
-		network_train(&net, training_data, 128, expected);
+		network_train(&net, training_data, samples, expected);
 	}
 
 	prediction_vector vec = predict_vector_batched(&net, &mem, &training_data, 1, net.batch_size, net.input->data.input.width);
