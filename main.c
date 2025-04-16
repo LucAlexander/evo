@@ -382,9 +382,6 @@ forward(network* const net, layer* const node, uint64_t pass_index){
 			for (uint64_t k = 0;k<prev->data.layer.width;++k){
 				double w = node->data.layer.weights[i][weight_index];
 				node->data.layer.output[i] += prev->data.layer.activated[k] * w;
-				assert(!isnan(w));
-				assert(!isnan(prev->data.layer.activated[k]));
-				assert(!isnan(node->data.layer.output[i]));
 				weight_index += 1;
 			}
 		}
@@ -455,10 +452,6 @@ backward(network* const net, layer* const node){
 					double dzdw = prev->data.input.output[k];
 					node->data.layer.weight_gradients[i][weight_index] += dzdw * dadz[i] * dcda[i];
 					clamp_gradient(net, &node->data.layer.weight_gradients[i][weight_index]);
-					assert(!isnan(dzdw));
-					assert(!isnan(dadz[i]));
-					assert(!isnan(dcda[i]));
-					assert(!isnan(node->data.layer.weight_gradients[i][weight_index]));
 					weight_index += 1;
 				}
 				continue;
@@ -486,10 +479,6 @@ backward(network* const net, layer* const node){
 				for (uint64_t n = 0;n<node->data.layer.width;++n){
 					double w = node->data.layer.weights[n][weight_index];
 					prev->data.layer.activation_gradients[t] += w * dadz[n] * dcda[n];
-					assert(!isnan(w));
-					assert(!isnan(dadz[n]));
-					assert(!isnan(dcda[n]));
-					assert(!isnan(prev->data.layer.activation_gradients[t]));
 				}
 				weight_index += 1;
 			}
@@ -626,7 +615,6 @@ network_train(network* const net, double** data, uint64_t data_size, double** ex
 				net->output->data.layer.width,
 				net->loss_parameter_a
 			);
-			assert(!isnan(loss));
 			loss_partials[net->derivative](
 				net->output->data.layer.activation_gradients,
 				net->output->data.layer.activated,
@@ -765,8 +753,6 @@ loss_mse_partial(double* const output, const double* const result, const double*
 #ifdef __SSE__
 	for (uint64_t i = 0;i<size;++i){
 		output[i] = 2*(result[i]-expected[i]);
-		assert(!isnan(output[i]));
-		assert(!isnan(expected[i]));
 	}
 #else
 	for (uint64_t i = 0;i<size;++i){
@@ -889,7 +875,6 @@ void
 activation_sigmoid_partial(double* const output, const double* const buffer, uint64_t size, double a){
 #ifdef __SSE__
 	for (uint64_t i = 0;i<size;++i){
-		assert(!isnan(buffer[i]));
 		double fx = 1/(1+expf(-buffer[i]));
 		output[i] = fx*(1-fx);
 	}
@@ -1121,8 +1106,6 @@ loss_mse(double* const buffer, const double* const result, const double* const e
 		double loss = expected[i]-result[i];
 		buffer[i] = loss;
 		sum += loss*loss;
-		assert(!isnan(expected[i]));
-		assert(!isnan(result[i]));
 	}
 	return (sum)/(size);
 #else
@@ -1422,8 +1405,6 @@ activation_sigmoid(double* const buffer, const double* const output, uint64_t si
 	}
 	for (;i<size;++i){
 		buffer[i] = 1/(1+expf(-output[i]));
-		assert(!isnan(output[i]));
-		assert(!isnan(buffer[i]));
 	}
 #else
 	for (uint64_t i = 0;i<size;++i){
@@ -2057,7 +2038,7 @@ main(int argc, char** argv){
 		}
 	}
 
-	for (uint64_t i = 0;i<100;++i){
+	for (uint64_t i = 0;i<1000;++i){
 		network_train(&net, training_data, samples, expected);
 	}
 
