@@ -25,6 +25,7 @@ typedef double (*loss_function)(double* const, const double* const, const double
 typedef void (*loss_derivative)(double* const, const double* const, const double* const, uint64_t, double);
 typedef void (*bias_init)(double* const, uint64_t, double, double);
 typedef void (*weight_init)(double** const, uint64_t, uint64_t, double, double);
+typedef void (*layer_weight_init)(double* const, uint64_t, double, double);
 
 typedef enum LOSS_FUNC {
 	LOSS_MSE,
@@ -64,6 +65,13 @@ typedef enum WEIGHT_FUNC {
 	WEIGHT_INITIALIZATION_UNIFORM,
 	WEIGHT_INITIALIZATION_NORMAL,
 } WEIGHT_FUNC;
+
+typedef enum LAYER_WEIGHT_FUNC {
+	LAYER_WEIGHT_INITIALIZATION_UNIFORM,
+	LAYER_WEIGHT_INITIALIZATION_NORMAL,
+	LAYER_WEIGHT_INITIALIZATION_STRONG,
+	LAYER_WEIGHT_INITIALIZATION_PARAMETRIC
+} LAYER_WEIGHT_FUNC;
 
 typedef enum LOSS_PARTIAL_FUNC {
 	LOSS_MSE_PARTIAL,
@@ -107,13 +115,14 @@ typedef struct layer {
 			// width * number of input weights, in same order as layer** prev
 			double** weights;
 			double* bias;
-			ACTIVATION_FUNC activation;
-			ACTIVATION_PARTIAL_FUNC derivative;
 			double** weight_gradients;
 			double* bias_gradients;
 			double* activation_gradients;
+			double* prev_weights;
 			double parameter_a;
 			uint64_t gradient_count;
+			ACTIVATION_FUNC activation;
+			ACTIVATION_PARTIAL_FUNC derivative;
 		} layer;
 		struct {
 			uint64_t width;
@@ -141,6 +150,7 @@ typedef struct network {
 	double* loss_output;
 	BIAS_FUNC bias;
 	WEIGHT_FUNC weight;
+	LAYER_WEIGHT_FUNC layer_weight;
 	uint64_t batch_size;
 	double learning_rate;
 	double loss_parameter_a;
@@ -148,10 +158,13 @@ typedef struct network {
 	double weight_parameter_b;
 	double bias_parameter_a;
 	double bias_parameter_b;
+	double prev_parameter_a;
+	double prev_parameter_b;
 	double gradient_clamp;
+	uint8_t layers_weighted;
 } network;
 
-network network_init(pool* const mem, layer* const input, layer* const output, WEIGHT_FUNC w, BIAS_FUNC b, double weight_a, double weight_b, double bias_a, double bias_b, uint64_t batch_size, double learning_rate, double clamp, LOSS_FUNC l);
+network network_init(pool* const mem, layer* const input, layer* const output, WEIGHT_FUNC w, BIAS_FUNC b, LAYER_WEIGHT_FUNC lw, double weight_a, double weight_b, double bias_a, double bias_b, double prev_a, double prev_b, uint64_t batch_size, double learning_rate, double clamp, LOSS_FUNC l);
 uint64_t network_register_layer(network* const net, layer* const node);
 void network_build(network* const net);
 layer* input_init(pool* const mem, uint64_t width);
@@ -207,6 +220,11 @@ void weight_initialization_he(double** const, uint64_t, uint64_t, double, double
 void weight_initialization_lecun(double** const, uint64_t, uint64_t, double, double);
 void weight_initialization_uniform(double** const, uint64_t, uint64_t, double, double);
 void weight_initialization_normal(double** const, uint64_t, uint64_t, double, double);
+
+void layer_weight_initialization_uniform(double* const, uint64_t, double, double);
+void layer_weight_initialization_normal(double* const, uint64_t, double, double);
+void layer_weight_initialization_strong(double* const, uint64_t, double, double);
+void layer_weight_initialization_parametric(double* const, uint64_t, double, double);
 
 void loss_mse_partial(double* const, const double* const, const double* const, uint64_t, double);
 void loss_mae_partial(double* const, const double* const, const double* const, uint64_t, double);

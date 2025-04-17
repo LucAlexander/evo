@@ -69,13 +69,21 @@ static weight_init weight_inits[] = {
 	weight_initialization_normal
 };
 
+static layer_weight_init layer_weight_inits[] = {
+	layer_weight_initialization_uniform,
+	layer_weight_initialization_normal,
+	layer_weight_initialization_strong,
+	layer_weight_initialization_parametric
+};
+
 network
 network_init(
 	pool* const mem,
 	layer* const input, layer* const output,
-	WEIGHT_FUNC weight, BIAS_FUNC bias,
+	WEIGHT_FUNC weight, BIAS_FUNC bias, LAYER_WEIGHT_FUNC layer_weight,
 	double weight_a, double weight_b,
 	double bias_a, double bias_b,
+	double layer_a, double layer_b,
 	uint64_t batch_size, double learning_rate,
 	double clamp,
 	LOSS_FUNC l
@@ -97,13 +105,17 @@ network_init(
 		.derivative=l,
 		.bias = bias,
 		.weight = weight,
+		.layer_weight = layer_weight,
 		.batch_size = batch_size,
 		.learning_rate = learning_rate,
 		.weight_parameter_a = weight_a,
 		.weight_parameter_b = weight_b,
 		.bias_parameter_a= bias_a,
 		.bias_parameter_b= bias_b,
-		.gradient_clamp = clamp
+		.prev_parameter_a = layer_a,
+		.prev_parameter_b = layer_b,
+		.gradient_clamp = clamp,
+		.layers_weighted = 0
 	};
 	return net;
 }
@@ -159,6 +171,7 @@ layer_init(pool* const mem, uint64_t width, ACTIVATION_FUNC activation, uint64_t
 	node->tag = LAYER_NODE;
 	node->data.layer.width = width;
 	node->data.layer.weights = NULL;
+	node->data.layer.prev_weights = NULL;
 #ifdef __SSE__
 	node->data.layer.output = pool_request_aligned(mem, sizeof(double)*width, SSE_ALIGNMENT);
 	node->data.layer.activated = pool_request_aligned(mem, sizeof(double)*width, SSE_ALIGNMENT);
@@ -334,9 +347,11 @@ allocate_weights(network* const net, pool* const mem, layer* const node, uint64_
 #ifdef __SSE__
 	node->data.layer.weights = pool_request_aligned(mem, sizeof(double*)*node->data.layer.width, SSE_ALIGNMENT);
 	node->data.layer.weight_gradients = pool_request_aligned(mem, sizeof(double)*node->data.layer.width, SSE_ALIGNMENT);
+	node->data.layer.prev_weights = pool_request_aligned(mem, sizeof(double)*node->prev_count, SSE_ALIGNMENT);
 #else
 	node->data.layer.weights = pool_request(mem, sizeof(double*)*node->data.layer.width);
 	node->data.layer.weight_gradients = pool_request(mem, sizeof(double)*node->data.layer.width);
+	node->data.layer.prev_weights = pool_request(mem, sizeof(double)*node->prev_count);
 #endif
 	uint64_t sum = 0;
 	for (uint64_t i = 0;i<node->prev_count;++i){
@@ -370,19 +385,40 @@ forward(network* const net, layer* const node, uint64_t pass_index){
 		return;
 	}
 	node->pass_index += 1;
-	for (uint64_t i = 0;i<node->data.layer.width;++i){
-		node->data.layer.output[i] = node->data.layer.bias[i];
-		uint64_t weight_index = 0;
-		for (uint64_t p = 0;p<node->prev_count;++p){
-			layer* prev = net->nodes[node->prev[p]];
-			if (prev->simulated == 0){
-				weight_index += prev->data.layer.width;
-				continue;
+	if (net->layers_weighted == 1){
+		for (uint64_t i = 0;i<node->data.layer.width;++i){
+			node->data.layer.output[i] = node->data.layer.bias[i];
+			uint64_t weight_index = 0;
+			for (uint64_t p = 0;p<node->prev_count;++p){
+				layer* prev = net->nodes[node->prev[p]];
+				if (prev->simulated == 0){
+					weight_index += prev->data.layer.width;
+					continue;
+				}
+				double layer_weight = node->data.layer.prev_weights[p];
+				for (uint64_t k = 0;k<prev->data.layer.width;++k){
+					double w = node->data.layer.weights[i][weight_index];
+					node->data.layer.output[i] += prev->data.layer.activated[k] * w * layer_weight;
+					weight_index += 1;
+				}
 			}
-			for (uint64_t k = 0;k<prev->data.layer.width;++k){
-				double w = node->data.layer.weights[i][weight_index];
-				node->data.layer.output[i] += prev->data.layer.activated[k] * w;
-				weight_index += 1;
+		}
+	}
+	else{
+		for (uint64_t i = 0;i<node->data.layer.width;++i){
+			node->data.layer.output[i] = node->data.layer.bias[i];
+			uint64_t weight_index = 0;
+			for (uint64_t p = 0;p<node->prev_count;++p){
+				layer* prev = net->nodes[node->prev[p]];
+				if (prev->simulated == 0){
+					weight_index += prev->data.layer.width;
+					continue;
+				}
+				for (uint64_t k = 0;k<prev->data.layer.width;++k){
+					double w = node->data.layer.weights[i][weight_index];
+					node->data.layer.output[i] += prev->data.layer.activated[k] * w;
+					weight_index += 1;
+				}
 			}
 		}
 	}
@@ -659,6 +695,12 @@ init_params(network* const net, layer* const node, uint64_t pass_index){
 		node->data.layer.width,
 		net->bias_parameter_a, net->bias_parameter_b
 	);
+	layer_weight_inits[net->layer_weight](
+		node->data.layer.prev_weights,
+		node->prev_count,
+		net->prev_parameter_a,
+		net->prev_parameter_b
+	);
 	for (uint64_t i = 0;i<node->next_count;++i){
 		init_params(net, net->nodes[node->next[i]], pass_index);
 	}
@@ -745,6 +787,34 @@ weight_initialization_normal(double** const out, uint64_t in_size, uint64_t out_
 		for (uint64_t k = 0;k<in_size;++k){
 			out[i][k] = normal_distribution(a, b);
 		}
+	}
+}
+
+void
+layer_weight_initialization_uniform(double* const buffer, uint64_t size, double a, double b){
+	for (uint64_t i = 0;i<size;++i){
+		buffer[i] = uniform_distribution(a, b);
+	}
+}
+
+void
+layer_weight_initialization_normal(double* const buffer, uint64_t size, double a, double b){
+	for (uint64_t i = 0;i<size;++i){
+		buffer[i] = normal_distribution(a, b);
+	}
+}
+
+void
+layer_weight_initialization_strong(double* const buffer, uint64_t size, double a, double b){
+	for (uint64_t i = 0;i<size;++i){
+		buffer[i] = 1;
+	}
+}
+
+void
+layer_weight_initialization_parametric(double* const buffer, uint64_t size, double a, double b){
+	for (uint64_t i = 0;i<size;++i){
+		buffer[i] = a;
 	}
 }
 
@@ -1981,7 +2051,9 @@ main(int argc, char** argv){
 		input, output,
 		WEIGHT_INITIALIZATION_XAVIER,
 		BIAS_INITIALIZATION_ZERO,
+		LAYER_WEIGHT_INITIALIZATION_STRONG,
 		1, 2,
+		0, 0,
 		0, 0,
 		16, 0.001,
 		5,
