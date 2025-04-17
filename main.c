@@ -80,10 +80,12 @@ network
 network_init(
 	pool* const mem,
 	layer* const input, layer* const output,
-	WEIGHT_FUNC weight, BIAS_FUNC bias, LAYER_WEIGHT_FUNC layer_weight,
+	WEIGHT_FUNC weight, BIAS_FUNC bias,
+	LAYER_WEIGHT_FUNC layer_weight, ACTIVATION_FUNC prune,
 	double weight_a, double weight_b,
 	double bias_a, double bias_b,
 	double layer_a, double layer_b,
+	double prune_a,
 	uint64_t batch_size, double learning_rate,
 	double clamp,
 	LOSS_FUNC l
@@ -106,6 +108,7 @@ network_init(
 		.bias = bias,
 		.weight = weight,
 		.layer_weight = layer_weight,
+		.prune = prune,
 		.batch_size = batch_size,
 		.learning_rate = learning_rate,
 		.weight_parameter_a = weight_a,
@@ -114,6 +117,7 @@ network_init(
 		.bias_parameter_b= bias_b,
 		.prev_parameter_a = layer_a,
 		.prev_parameter_b = layer_b,
+		.prune_parameter_a = prune_a,
 		.gradient_clamp = clamp,
 		.layers_weighted = 0
 	};
@@ -166,7 +170,7 @@ input_init(pool* const mem, uint64_t width){
 }
 
 layer*
-layer_init(pool* const mem, uint64_t width, ACTIVATION_FUNC activation, uint64_t parameter_a){
+layer_init(pool* const mem, uint64_t width, ACTIVATION_FUNC activation, double parameter_a){
 	layer* node = pool_request(mem, sizeof(layer));
 	node->tag = LAYER_NODE;
 	node->data.layer.width = width;
@@ -210,6 +214,11 @@ layer_link(network* const net, pool* const mem, uint64_t a, uint64_t b){
 	layer* node_a = net->nodes[a];
 	layer* node_b = net->nodes[b];
 	assert(node_b->tag != INPUT_NODE);
+	for (uint64_t i = 0;i<node_a->next_count;++i){
+		if (node_a->next[i] == b){
+			return;
+		}
+	}
 	if (node_a->next_count == node_a->next_capacity){
 		uint64_t* new = pool_request(mem, sizeof(uint64_t)*node_a->next_capacity*2);
 		for (uint64_t i = 0;i<node_a->next_capacity;++i){
@@ -2139,6 +2148,39 @@ network_show(network* const net){
 	}
 }
 
+void
+network_prune(network* const net){
+	for (uint64_t i = 0;i<net->node_count;++i){
+		layer* node = net->nodes[i];
+		if (node == net->input){
+			continue;
+		}
+		activations[net->prune](
+			node->data.layer.prev_weights,
+			node->data.layer.prev_weights,
+			node->prev_count,
+			net->prune_parameter_a
+		);
+	}
+}
+
+void
+network_compose_node(network* const net, layer* const node){
+	//TODO
+}
+
+void
+network_compose(network* const net){
+	for (uint64_t i = 0;i<net->node_count;++i){
+		for (uint64_t k = 0;k<net->node_count;++k){
+			if (net->nodes[k] == net->input){
+				continue;
+			}
+			layer_link(net, net->mem, i, k);
+		}
+	}
+}
+
 int
 main(int argc, char** argv){
 	set_seed(time(NULL));
@@ -2159,9 +2201,11 @@ main(int argc, char** argv){
 		WEIGHT_INITIALIZATION_XAVIER,
 		BIAS_INITIALIZATION_ZERO,
 		LAYER_WEIGHT_INITIALIZATION_STRONG,
+		ACTIVATION_RELU,
 		1, 2,
 		0, 0,
 		0, 0,
+		0,
 		16, 0.001,
 		5,
 		LOSS_MSE
@@ -2220,9 +2264,10 @@ main(int argc, char** argv){
 
 	net.layers_weighted = 1;
 
-	for (uint64_t i = 0;i<1000;++i){
+	for (uint64_t i = 0;i<10;++i){
 		network_train(&net, training_data, samples, expected);
 	}
+	network_prune(&net);
 
 	prediction_vector vec = predict_vector_batched(&net, &mem, &training_data, 1, net.batch_size, net.input->data.input.width);
 	printf("predicted %lu (%lf) \n", vec.class[0], vec.probability[0]);

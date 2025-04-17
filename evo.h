@@ -152,6 +152,7 @@ typedef struct network {
 	BIAS_FUNC bias;
 	WEIGHT_FUNC weight;
 	LAYER_WEIGHT_FUNC layer_weight;
+	ACTIVATION_FUNC prune;
 	uint64_t batch_size;
 	double learning_rate;
 	double loss_parameter_a;
@@ -161,15 +162,16 @@ typedef struct network {
 	double bias_parameter_b;
 	double prev_parameter_a;
 	double prev_parameter_b;
+	double prune_parameter_a;
 	double gradient_clamp;
 	uint8_t layers_weighted;
 } network;
 
-network network_init(pool* const mem, layer* const input, layer* const output, WEIGHT_FUNC w, BIAS_FUNC b, LAYER_WEIGHT_FUNC lw, double weight_a, double weight_b, double bias_a, double bias_b, double prev_a, double prev_b, uint64_t batch_size, double learning_rate, double clamp, LOSS_FUNC l);
+network network_init(pool* const mem, layer* const input, layer* const output, WEIGHT_FUNC w, BIAS_FUNC b, LAYER_WEIGHT_FUNC lw, ACTIVATION_FUNC prune, double weight_a, double weight_b, double bias_a, double bias_b, double prev_a, double prev_b, double prune_a, uint64_t batch_size, double learning_rate, double clamp, LOSS_FUNC l);
 uint64_t network_register_layer(network* const net, layer* const node);
 void network_build(network* const net);
 layer* input_init(pool* const mem, uint64_t width);
-layer* layer_init(pool* const mem, uint64_t width, ACTIVATION_FUNC activation, uint64_t parameter_a);
+layer* layer_init(pool* const mem, uint64_t width, ACTIVATION_FUNC activation, double parameter_a);
 void layer_link(network* const net, pool* const mem, uint64_t a, uint64_t b);
 void layer_link_backward(network* const net, pool* const mem, uint64_t a, uint64_t b);
 void layer_unlink(network* const net, uint64_t a, uint64_t b);
@@ -268,5 +270,9 @@ prediction_vector predict_vector(network* const net, pool* const mem, double** i
 prediction_vector predict_vector_batched(network* const net, pool* const mem, double*** input, uint64_t sample_count, uint64_t vector_len, uint64_t len);
 
 void network_show(network* const net);
+
+void network_prune(network* const net);
+void network_compose_node(network* const net, layer* const node);
+void network_compose(network* const net);
 
 #endif
