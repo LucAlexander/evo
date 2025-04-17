@@ -1798,6 +1798,8 @@ write_node(network* const net, layer* const node, FILE* outfile){
 		for (uint64_t i = 0;i<node->prev_count;++i){
 			sum += net->nodes[node->prev[i]]->data.layer.width;
 		}
+		fwrite(&node->prev_count, sizeof(uint64_t), 1, outfile);
+		fwrite(&node->data.layer.prev_weights, sizeof(double), node->prev_count, outfile);
 		fwrite(&sum, sizeof(uint64_t), 1, outfile);
 		for (uint64_t i = 0;i<node->data.layer.width;++i){
 			fwrite(&node->data.layer.weights[i], sizeof(double), sum, outfile);
@@ -1824,6 +1826,13 @@ load_nodes(network* const net, pool* const mem, FILE* infile){
 #endif
 		if (node->tag == LAYER_NODE){
 			uint64_t sum;
+			fread(&node->prev_count, sizeof(uint64_t), 1, infile);
+#ifdef __SSE__
+			node->data.layer.prev_weights = pool_request_aligned(mem, sizeof(double)*node->prev_count, SSE_ALIGNMENT);
+#else
+			node->data.layer.prev_weights = pool_request(mem, sizeof(double)*node->prev_count);
+#endif
+			fread(&node->data.layer.prev_weights, sizeof(double), node->prev_count, infile);
 			fread(&sum, sizeof(uint64_t), 1, infile);
 #ifdef __SSE__
 			node->data.layer.weights = pool_request_aligned(mem, sizeof(double*)*node->data.layer.width, SSE_ALIGNMENT);
@@ -1891,6 +1900,7 @@ write_network(network* const net, const char* filename){
 	fwrite(&net->derivative, sizeof(LOSS_PARTIAL_FUNC), 1, outfile);
 	fwrite(&net->bias, sizeof(BIAS_FUNC), 1, outfile);
 	fwrite(&net->weight, sizeof(WEIGHT_FUNC), 1, outfile);
+	fwrite(&net->layer_weight, sizeof(LAYER_WEIGHT_FUNC), 1, outfile);
 	fwrite(&net->batch_size, sizeof(uint64_t), 1, outfile);
 	fwrite(&net->learning_rate, sizeof(double), 1, outfile);
 	fwrite(&net->loss_parameter_a, sizeof(double), 1, outfile);
@@ -1899,6 +1909,8 @@ write_network(network* const net, const char* filename){
 	fwrite(&net->bias_parameter_a, sizeof(double), 1, outfile);
 	fwrite(&net->bias_parameter_b, sizeof(double), 1, outfile);
 	fwrite(&net->node_capacity, sizeof(uint64_t), 1, outfile);
+	fwrite(&net->prev_parameter_a, sizeof(double), 1, outfile);
+	fwrite(&net->prev_parameter_b, sizeof(double), 1, outfile);
 	fwrite(&net->gradient_clamp, sizeof(double), 1, outfile);
 	for (uint64_t i = 0;i<net->node_count;++i){
 		write_node(net, net->nodes[i], outfile);
@@ -1918,6 +1930,7 @@ load_network(pool* const mem, const char* filename){
 	fread(&net.derivative, sizeof(LOSS_PARTIAL_FUNC), 1, infile);
 	fread(&net.bias, sizeof(BIAS_FUNC), 1, infile);
 	fread(&net.weight, sizeof(WEIGHT_FUNC), 1, infile);
+	fread(&net.layer_weight, sizeof(LAYER_WEIGHT_FUNC), 1, infile);
 	fread(&net.batch_size, sizeof(uint64_t), 1, infile);
 	fread(&net.learning_rate, sizeof(double), 1, infile);
 	fread(&net.loss_parameter_a, sizeof(double), 1, infile);
@@ -1926,6 +1939,8 @@ load_network(pool* const mem, const char* filename){
 	fread(&net.bias_parameter_a, sizeof(double), 1, infile);
 	fread(&net.bias_parameter_b, sizeof(double), 1, infile);
 	fread(&net.node_capacity, sizeof(uint64_t), 1, infile);
+	fread(&net.prev_parameter_a, sizeof(double), 1, infile);
+	fread(&net.prev_parameter_b, sizeof(double), 1, infile);
 	fread(&net.gradient_clamp, sizeof(double), 1, infile);
 	net.nodes = pool_request(mem, sizeof(uint64_t)*net.node_capacity);
 	load_nodes(&net, mem, infile);
