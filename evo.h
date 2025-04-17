@@ -119,6 +119,7 @@ typedef struct layer {
 			double* bias_gradients;
 			double* activation_gradients;
 			double* prev_weights;
+			double* prev_weight_gradients;
 			double parameter_a;
 			uint64_t gradient_count;
 			ACTIVATION_FUNC activation;

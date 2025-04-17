@@ -172,6 +172,7 @@ layer_init(pool* const mem, uint64_t width, ACTIVATION_FUNC activation, uint64_t
 	node->data.layer.width = width;
 	node->data.layer.weights = NULL;
 	node->data.layer.prev_weights = NULL;
+	node->data.layer.prev_weight_gradients = NULL;
 #ifdef __SSE__
 	node->data.layer.output = pool_request_aligned(mem, sizeof(double)*width, SSE_ALIGNMENT);
 	node->data.layer.activated = pool_request_aligned(mem, sizeof(double)*width, SSE_ALIGNMENT);
@@ -348,10 +349,12 @@ allocate_weights(network* const net, pool* const mem, layer* const node, uint64_
 	node->data.layer.weights = pool_request_aligned(mem, sizeof(double*)*node->data.layer.width, SSE_ALIGNMENT);
 	node->data.layer.weight_gradients = pool_request_aligned(mem, sizeof(double)*node->data.layer.width, SSE_ALIGNMENT);
 	node->data.layer.prev_weights = pool_request_aligned(mem, sizeof(double)*node->prev_count, SSE_ALIGNMENT);
+	node->data.layer.prev_weight_gradients = pool_request_aligned(mem, sizeof(double)*node->prev_count, SSE_ALIGNMENT);
 #else
 	node->data.layer.weights = pool_request(mem, sizeof(double*)*node->data.layer.width);
 	node->data.layer.weight_gradients = pool_request(mem, sizeof(double)*node->data.layer.width);
 	node->data.layer.prev_weights = pool_request(mem, sizeof(double)*node->prev_count);
+	node->data.layer.prev_weight_gradients = pool_request(mem, sizeof(double)*node->prev_count);
 #endif
 	uint64_t sum = 0;
 	for (uint64_t i = 0;i<node->prev_count;++i){
@@ -479,47 +482,124 @@ backward(network* const net, layer* const node){
 		node->data.layer.bias_gradients[i] += 1 * dadz[i] * dcda[i];
 	}
 	clamp_gradients(net, node->data.layer.bias_gradients, node->data.layer.width);
-	for (uint64_t i = 0;i<node->data.layer.width;++i){
-		uint64_t weight_index = 0;
-		for (uint64_t p = 0;p<node->prev_count;++p){
-			layer* prev = net->nodes[node->prev[p]];
-			if (prev->tag == INPUT_NODE){
+	if (net->layers_weighted == 1){
+		for (uint64_t i = 0;i<node->data.layer.width;++i){
+			uint64_t weight_index = 0;
+			for (uint64_t p = 0;p<node->prev_count;++p){
+				layer* prev = net->nodes[node->prev[p]];
+				double layer_weight = node->data.layer.prev_weights[p];
+				if (prev->tag == INPUT_NODE){
+					for (uint64_t k = 0;k<prev->data.layer.width;++k){
+						double dzdw = prev->data.input.output[k] * layer_weight;
+						node->data.layer.weight_gradients[i][weight_index] += dzdw * dadz[i] * dcda[i];
+						clamp_gradient(net, &node->data.layer.weight_gradients[i][weight_index]);
+						weight_index += 1;
+					}
+					continue;
+				}
 				for (uint64_t k = 0;k<prev->data.layer.width;++k){
-					double dzdw = prev->data.input.output[k];
+					double dzdw = prev->data.layer.activated[k] * layer_weight;
 					node->data.layer.weight_gradients[i][weight_index] += dzdw * dadz[i] * dcda[i];
 					clamp_gradient(net, &node->data.layer.weight_gradients[i][weight_index]);
 					weight_index += 1;
 				}
-				continue;
-			}
-			for (uint64_t k = 0;k<prev->data.layer.width;++k){
-				double dzdw = prev->data.layer.activated[k];
-				node->data.layer.weight_gradients[i][weight_index] += dzdw * dadz[i] * dcda[i];
-				clamp_gradient(net, &node->data.layer.weight_gradients[i][weight_index]);
-				weight_index += 1;
 			}
 		}
-	}
-	uint64_t weight_index = 0;
-	for (uint64_t i = 0;i<node->prev_count;++i){
-		layer* prev = net->nodes[node->prev[i]];
-		if (prev->tag == INPUT_NODE){
-			weight_index += prev->data.input.width;
-			continue;
-		}
-		for (uint64_t k = 0;k<prev->next_count;++k){
-			if (net->nodes[prev->next[k]] != node){
+		uint64_t weight_index = 0;
+		for (uint64_t i = 0;i<node->prev_count;++i){
+			layer* prev = net->nodes[node->prev[i]];
+			if (prev->tag == INPUT_NODE){
+				weight_index += prev->data.input.width;
 				continue;
 			}
-			for (uint64_t t = 0;t<prev->data.layer.width;++t){
-				for (uint64_t n = 0;n<node->data.layer.width;++n){
-					double w = node->data.layer.weights[n][weight_index];
-					prev->data.layer.activation_gradients[t] += w * dadz[n] * dcda[n];
+			double layer_weight = node->data.layer.prev_weights[i];
+			for (uint64_t k = 0;k<prev->next_count;++k){
+				if (net->nodes[prev->next[k]] != node){
+					continue;
 				}
-				weight_index += 1;
+				for (uint64_t t = 0;t<prev->data.layer.width;++t){
+					for (uint64_t n = 0;n<node->data.layer.width;++n){
+						double w = node->data.layer.weights[n][weight_index] * layer_weight;
+						prev->data.layer.activation_gradients[t] += w * dadz[n] * dcda[n];
+					}
+					weight_index += 1;
+				}
+				clamp_gradients(net, prev->data.layer.activation_gradients, prev->data.layer.width);
+				break;
 			}
-			clamp_gradients(net, prev->data.layer.activation_gradients, prev->data.layer.width);
-			break;
+		}
+		double sig_dadz = 0;
+		double sig_dcda = 0;
+		for (uint64_t i = 0;i<node->data.layer.width;++i){
+			sig_dadz += dadz[i];
+			sig_dcda += dcda[i];
+		}
+		weight_index = 0;
+		for (uint64_t i = 0;i<node->prev_count;++i){
+			double wa_1 = 0;
+			layer* prev = net->nodes[node->prev[i]];
+			if (prev->tag == INPUT_NODE){
+				for (uint64_t n = 0;n<node->data.layer.width;++n){
+					for (uint64_t k = weight_index;k < weight_index + prev->data.layer.width;++k){
+						wa_1+= node->data.layer.weights[n][k] * prev->data.input.output[k-weight_index];
+					}
+				}
+			}
+			else{
+				for (uint64_t n = 0;n<node->data.layer.width;++n){
+					for (uint64_t k = weight_index;k < weight_index + prev->data.layer.width;++k){
+						wa_1 += node->data.layer.weights[n][k] * prev->data.layer.activated[k-weight_index];
+					}
+				}
+			}
+			node->data.layer.prev_weight_gradients[i] += wa_1 * sig_dadz * sig_dcda;
+			weight_index += prev->data.layer.width;
+		}
+		clamp_gradients(net, node->data.layer.prev_weight_gradients, node->prev_count);
+	}
+	else{
+		for (uint64_t i = 0;i<node->data.layer.width;++i){
+			uint64_t weight_index = 0;
+			for (uint64_t p = 0;p<node->prev_count;++p){
+				layer* prev = net->nodes[node->prev[p]];
+				if (prev->tag == INPUT_NODE){
+					for (uint64_t k = 0;k<prev->data.layer.width;++k){
+						double dzdw = prev->data.input.output[k];
+						node->data.layer.weight_gradients[i][weight_index] += dzdw * dadz[i] * dcda[i];
+						clamp_gradient(net, &node->data.layer.weight_gradients[i][weight_index]);
+						weight_index += 1;
+					}
+					continue;
+				}
+				for (uint64_t k = 0;k<prev->data.layer.width;++k){
+					double dzdw = prev->data.layer.activated[k];
+					node->data.layer.weight_gradients[i][weight_index] += dzdw * dadz[i] * dcda[i];
+					clamp_gradient(net, &node->data.layer.weight_gradients[i][weight_index]);
+					weight_index += 1;
+				}
+			}
+		}
+		uint64_t weight_index = 0;
+		for (uint64_t i = 0;i<node->prev_count;++i){
+			layer* prev = net->nodes[node->prev[i]];
+			if (prev->tag == INPUT_NODE){
+				weight_index += prev->data.input.width;
+				continue;
+			}
+			for (uint64_t k = 0;k<prev->next_count;++k){
+				if (net->nodes[prev->next[k]] != node){
+					continue;
+				}
+				for (uint64_t t = 0;t<prev->data.layer.width;++t){
+					for (uint64_t n = 0;n<node->data.layer.width;++n){
+						double w = node->data.layer.weights[n][weight_index];
+						prev->data.layer.activation_gradients[t] += w * dadz[n] * dcda[n];
+					}
+					weight_index += 1;
+				}
+				clamp_gradients(net, prev->data.layer.activation_gradients, prev->data.layer.width);
+				break;
+			}
 		}
 	}
 	if (node->prev_count > 1){
@@ -569,6 +649,13 @@ apply_gradients(network* const net, layer* const node, uint64_t pass_index){
 			}
 		}
 	}
+	if (net->layers_weighted){
+		for (uint64_t i = 0;i<node->prev_count;++i){
+			double average = (node->data.layer.prev_weight_gradients[i]/node->data.layer.gradient_count);
+			node->data.layer.prev_weights[i] -= net->learning_rate * average;
+			node->data.layer.prev_weight_gradients[i] = 0;
+		}
+	}
 	for (uint64_t i = 0;i<node->next_count;++i){
 		apply_gradients(net, net->nodes[node->next[i]], pass_index);
 	}
@@ -604,6 +691,11 @@ zero_gradients(network* const net, layer* const node, uint64_t pass_index){
 				node->data.layer.weight_gradients[i][weight_index] = 0;
 				weight_index += 1;
 			}
+		}
+	}
+	if (net->layers_weighted){
+		for (uint64_t i = 0;i<node->prev_count;++i){
+			node->data.layer.prev_weight_gradients[i] = 0;
 		}
 	}
 	for (uint64_t i = 0;i<node->next_count;++i){
@@ -2125,6 +2217,8 @@ main(int argc, char** argv){
 			pos = 0;
 		}
 	}
+
+	net.layers_weighted = 1;
 
 	for (uint64_t i = 0;i<1000;++i){
 		network_train(&net, training_data, samples, expected);
