@@ -2013,6 +2013,8 @@ write_network(network* const net, const char* filename){
 	fwrite(&net->prev_parameter_a, sizeof(double), 1, outfile);
 	fwrite(&net->prev_parameter_b, sizeof(double), 1, outfile);
 	fwrite(&net->gradient_clamp, sizeof(double), 1, outfile);
+	fwrite(&net->prune, sizeof(ACTIVATION_FUNC), 1, outfile);
+	fwrite(&net->prune_parameter_a, sizeof(double), 1, outfile);
 	for (uint64_t i = 0;i<net->node_count;++i){
 		write_node(net, net->nodes[i], outfile);
 	}
@@ -2043,6 +2045,8 @@ load_network(pool* const mem, const char* filename){
 	fread(&net.prev_parameter_a, sizeof(double), 1, infile);
 	fread(&net.prev_parameter_b, sizeof(double), 1, infile);
 	fread(&net.gradient_clamp, sizeof(double), 1, infile);
+	fread(&net.prune, sizeof(ACTIVATION_FUNC), 1, infile);
+	fread(&net.prune_parameter_a, sizeof(double), 1, infile);
 	net.nodes = pool_request(mem, sizeof(uint64_t)*net.node_capacity);
 	load_nodes(&net, mem, infile);
 	fclose(infile);
@@ -2166,6 +2170,7 @@ network_prune(network* const net){
 
 void
 network_compose_node(network* const net, layer* const node){
+	network_register_layer(net, node);
 	//TODO
 }
 
