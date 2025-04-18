@@ -343,17 +343,7 @@ sort_connections(network* const net, layer* const prev, layer* const node, uint6
 }
 
 void
-allocate_weights(network* const net, pool* const mem, layer* const node, uint64_t pass_index){
-	if (node->pass_index >= pass_index){
-		return;
-	}
-	node->pass_index += 1;
-	if (node->tag == INPUT_NODE){
-		for (uint64_t i = 0;i<node->next_count;++i){
-			allocate_weights(net, mem, net->nodes[node->next[i]], pass_index);
-		}
-		return;
-	}
+allocate_node_weights(network* const net, pool* const mem, layer* const node){
 #ifdef __SSE__
 	node->data.layer.weights = pool_request_aligned(mem, sizeof(double*)*node->data.layer.width, SSE_ALIGNMENT);
 	node->data.layer.weight_gradients = pool_request_aligned(mem, sizeof(double)*node->data.layer.width, SSE_ALIGNMENT);
@@ -379,6 +369,21 @@ allocate_weights(network* const net, pool* const mem, layer* const node, uint64_
 		node->data.layer.weight_gradients[i] = pool_request(mem, sizeof(double)*sum);
 #endif
 	}
+}
+
+void
+allocate_weights(network* const net, pool* const mem, layer* const node, uint64_t pass_index){
+	if (node->pass_index >= pass_index){
+		return;
+	}
+	node->pass_index += 1;
+	if (node->tag == INPUT_NODE){
+		for (uint64_t i = 0;i<node->next_count;++i){
+			allocate_weights(net, mem, net->nodes[node->next[i]], pass_index);
+		}
+		return;
+	}
+	allocate_node_weights(net, mem, node);
 	for (uint64_t i = 0;i<node->next_count;++i){
 		allocate_weights(net, mem, net->nodes[node->next[i]], pass_index);
 	}
@@ -671,18 +676,7 @@ apply_gradients(network* const net, layer* const node, uint64_t pass_index){
 	node->data.layer.gradient_count = 0;
 }
 
-void
-zero_gradients(network* const net, layer* const node, uint64_t pass_index){
-	if (node->pass_index >= pass_index){
-		return;
-	}
-	node->pass_index += 1;
-	if (node->tag == INPUT_NODE){
-		for (uint64_t i = 0;i<node->next_count;++i){
-			zero_gradients(net, net->nodes[node->next[i]], pass_index);
-		}
-		return;
-	}
+void zero_node_gradients(network* const net, layer* const node){
 	node->data.layer.gradient_count = 0;
 	for (uint64_t i = 0;i<node->data.layer.width;++i){
 		node->data.layer.bias_gradients[i] = 0;
@@ -707,6 +701,21 @@ zero_gradients(network* const net, layer* const node, uint64_t pass_index){
 			node->data.layer.prev_weight_gradients[i] = 0;
 		}
 	}
+}
+
+void
+zero_gradients(network* const net, layer* const node, uint64_t pass_index){
+	if (node->pass_index >= pass_index){
+		return;
+	}
+	node->pass_index += 1;
+	if (node->tag == INPUT_NODE){
+		for (uint64_t i = 0;i<node->next_count;++i){
+			zero_gradients(net, net->nodes[node->next[i]], pass_index);
+		}
+		return;
+	}
+	zero_node_gradients(net, node);
 	for (uint64_t i = 0;i<node->next_count;++i){
 		zero_gradients(net, net->nodes[node->next[i]], pass_index);
 	}
@@ -2138,8 +2147,11 @@ network_show(network* const net){
 		if (node->tag == INPUT_NODE){
 			printf("(input)\n");
 		}
-		else if (node->next_count == 0){
-			printf("(output)\n");
+		else {
+			if (node->next_count == 0){
+				printf("(output)\n");
+			}
+			printf("gradient_count: %lu\n", node->data.layer.gradient_count);
 		}
 		printf("neurons: %lu\n", node->data.layer.width);
 		for (uint64_t k = 0;k<node->next_count;++k){
@@ -2171,7 +2183,10 @@ network_prune(network* const net){
 void
 network_compose_layer(network* const net, layer* const new){
 	uint64_t id = network_register_layer(net, new);
-	for (uint64_t i = 0;i<net->node_count;++i){
+	allocate_node_weights(net, net->mem, new);
+	zero_node_gradients(net, new);
+	new->pass_index = net->input->pass_index;
+	for (uint64_t i = 0;i<net->node_count-1;++i){
 		layer* node = net->nodes[i];
 		if (node != net->output){
 			layer_link(net, net->mem, i, id);
@@ -2186,21 +2201,14 @@ network_compose_layer(network* const net, layer* const new){
 
 void
 update_layer_connection_data(network* const net, layer* const node, uint64_t target_id){
-	uint64_t target_index = 0;
 	uint64_t target_weight_index = 0;
 	for (uint64_t i = 0;i<node->prev_count;++i){
 		if (node->prev[i] == target_id){
-			target_index = i;
 			break;
 		}
 		target_weight_index += net->nodes[node->prev[i]]->data.layer.width;
 	}
-	uint64_t newsize = 0;
-	layer* target_node = net->nodes[target_id];
-	uint64_t target_size = target_node->data.layer.width;
-	for (uint64_t i = 0;i<node->prev_count;++i){
-		newsize += net->nodes[i]->data.layer.width;
-	}
+	uint64_t newsize = target_weight_index + net->nodes[target_id]->data.layer.width;
 	for (uint64_t i = 0;i<node->data.layer.width;++i){
 #ifdef __SSE__
 		double* new_weights = pool_request_aligned(net->mem, sizeof(double)*newsize, SSE_ALIGNMENT);
@@ -2217,11 +2225,6 @@ update_layer_connection_data(network* const net, layer* const node, uint64_t tar
 			net->weight_parameter_b
 		);
 		memcpy(new_weights, node->data.layer.weights[i], target_weight_index*sizeof(double));
-		memcpy(
-			&new_weights[target_weight_index+target_size],
-			&node->data.layer.weights[i][target_weight_index],
-			(newsize-(target_weight_index+target_size))*sizeof(double)
-		);
 		node->data.layer.weight_gradients[i] = new_weight_gradients;
 		node->data.layer.weights[i] = new_weights;
 	}
@@ -2233,10 +2236,7 @@ update_layer_connection_data(network* const net, layer* const node, uint64_t tar
 	double* new_prev_weight_gradients = pool_request(net->mem, sizeof(double)*node->prev_count);
 #endif
 	memset(new_prev_weight_gradients, 0, node->prev_count*sizeof(double));
-	memcpy(new_prev_weights, node->data.layer.prev_weights, node->prev_count*sizeof(double));
-	for (uint64_t i = node->prev_count;i>target_index;--i){
-		new_prev_weights[i] = new_prev_weights[i-1];
-	}
+	memcpy(new_prev_weights, node->data.layer.prev_weights, (node->prev_count-1)*sizeof(double));
 	layer_weight_inits[net->layer_weight](
 		new_prev_weights,
 		1,
@@ -2326,6 +2326,11 @@ main(int argc, char** argv){
 			pos = 0;
 		}
 	}
+
+	layer* addition = layer_init(&mem, 64, ACTIVATION_SIGMOID, 0);
+
+	network_compose_layer(&net, addition);
+	network_show(&net);
 
 	net.layers_weighted = 1;
 
