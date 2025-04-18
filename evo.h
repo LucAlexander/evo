@@ -275,5 +275,6 @@ void network_show(network* const net);
 void network_prune(network* const net);
 void network_compose_layer(network* const net, layer* const node);
 void update_layer_connection_data(network* const net, layer* const node, uint64_t target_id);
+void grow_network(network* const net, double** training_data, uint64_t samples, double** expected);
 
 #endif

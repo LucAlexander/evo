@@ -2247,19 +2247,37 @@ update_layer_connection_data(network* const net, layer* const node, uint64_t tar
 	node->data.layer.prev_weight_gradients = new_prev_weight_gradients;
 }
 
+void
+grow_network(network* const net, double** training_data, uint64_t samples, double** expected){
+	uint64_t in = network_register_layer(net, net->input);
+	uint64_t out = network_register_layer(net, net->output);
+	layer_link(net, net->mem, in, out);
+	network_build(net);
+	net->layers_weighted = 1;
+	layer* initial = layer_init(net->mem, 64, ACTIVATION_SIGMOID, 0);
+	network_compose_layer(net, initial);
+	uint64_t epochs = 100;
+	uint64_t prune_epoch = 10;
+	uint64_t grow_epoch = 50;
+	for (uint64_t i = 0;i<epochs;++i){
+		network_train(net, training_data, samples, expected);
+		if ((i+1)%prune_epoch == 0){
+			network_prune(net);
+			if ((i+1)%grow_epoch == 0){
+				layer* new = layer_init(net->mem, 64, ACTIVATION_SIGMOID, 0);
+				network_compose_layer(net, new);
+			}
+		}
+	}
+	network_prune(net);
+}
+
 int
 main(int argc, char** argv){
 	set_seed(time(NULL));
 	pool mem = pool_alloc(TEMP_POOL_SIZE, POOL_STATIC);
-
-
 	layer* input = input_init(&mem, 8);
-	layer* a = layer_init(&mem, 64, ACTIVATION_SIGMOID, 0);
-	layer* b = layer_init(&mem, 64, ACTIVATION_SIGMOID, 0);
-	layer* c = layer_init(&mem, 64, ACTIVATION_SIGMOID, 0);
 	layer* output = layer_init(&mem, 8, ACTIVATION_SIGMOID, 0);
-
-
 	network net = network_init(
 		&mem,
 		input, output,
@@ -2275,30 +2293,6 @@ main(int argc, char** argv){
 		5,
 		LOSS_MSE
 	);
-
-
-	uint64_t input_id = network_register_layer(&net, input);
-	uint64_t aid = network_register_layer(&net, a);
-	uint64_t bid = network_register_layer(&net, b);
-	uint64_t cid = network_register_layer(&net, c);
-	uint64_t output_id = network_register_layer(&net, output);
-	layer_link(&net, &mem, input_id, output_id);
-	layer_insert(&net, &mem, input_id, cid, output_id);
-	layer_insert(&net, &mem, input_id, bid, cid);
-	layer_insert(&net, &mem, input_id, aid, bid);
-	layer_link(&net, &mem, cid, aid);
-	layer_link(&net, &mem, bid, output_id);
-
-
-	network_build(&net);
-	network_show(&net);
-
-	write_network(&net, "test.mdl");
-	printf("wrote\n");
-	network copy = load_network(&mem, "test.mdl");
-	printf("loaded\n");
-	network_show(&copy);
-
 	uint64_t samples = 512;
 	double** training_data = pool_request(&mem, sizeof(double*)*samples);
 	uint8_t pos = 0;
@@ -2326,22 +2320,9 @@ main(int argc, char** argv){
 			pos = 0;
 		}
 	}
-
-	layer* addition = layer_init(&mem, 64, ACTIVATION_SIGMOID, 0);
-
-	network_compose_layer(&net, addition);
-	network_show(&net);
-
-	net.layers_weighted = 1;
-
-	for (uint64_t i = 0;i<10;++i){
-		network_train(&net, training_data, samples, expected);
-	}
-	network_prune(&net);
-
+	grow_network(&net, training_data, samples, expected);
 	prediction_vector vec = predict_vector_batched(&net, &mem, &training_data, 1, net.batch_size, net.input->data.input.width);
 	printf("predicted %lu (%lf) \n", vec.class[0], vec.probability[0]);
-
 	pool_dealloc(&mem);
 	return 0;
 }
