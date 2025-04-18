@@ -49,8 +49,10 @@ typedef enum ACTIVATION_FUNC {
 	ACTIVATION_SOFTMAX,
 	ACTIVATION_SWISH,
 	ACTIVATION_GELU,
-	ACTIVATION_SELU,
+	ACTIVATION_SELU
 } ACTIVATION_FUNC;
+
+#define ACTIVATION_COUNT ACTIVATION_SELU+1
 
 typedef enum BIAS_FUNC {
 	BIAS_INITIALIZATION_ZERO,
@@ -169,6 +171,7 @@ typedef struct network {
 
 network network_init(pool* const mem, layer* const input, layer* const output, WEIGHT_FUNC w, BIAS_FUNC b, LAYER_WEIGHT_FUNC lw, ACTIVATION_FUNC prune, double weight_a, double weight_b, double bias_a, double bias_b, double prev_a, double prev_b, double prune_a, uint64_t batch_size, double learning_rate, double clamp, LOSS_FUNC l);
 uint64_t network_register_layer(network* const net, layer* const node);
+void reset_pass_index(network* const net);
 void network_build(network* const net);
 layer* input_init(pool* const mem, uint64_t width);
 layer* layer_init(pool* const mem, uint64_t width, ACTIVATION_FUNC activation, double parameter_a);
@@ -275,6 +278,8 @@ void network_show(network* const net);
 void network_prune(network* const net);
 void network_compose_layer(network* const net, layer* const node);
 void update_layer_connection_data(network* const net, layer* const node, uint64_t target_id);
-void grow_network(network* const net, double** training_data, uint64_t samples, double** expected);
+void grow_network(network* const net, double** training_data, uint64_t samples, double** expected, uint64_t epochs, uint64_t prune_epoch, uint64_t grow_epoch);
+void grow_network_retrain(network* const net, double** training_data, uint64_t samples, double** expected, uint64_t epochs, uint64_t prune_epoch, uint64_t grow_epoch);
+layer* grow_layer(pool* const mem);
 
 #endif

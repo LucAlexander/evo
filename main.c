@@ -140,7 +140,15 @@ network_register_layer(network* const net, layer* const node){
 }
 
 void
+reset_pass_index(network* const net){
+	for (uint64_t i = 0;i<net->node_count;++i){
+		net->nodes[i]->pass_index = 0;
+	}
+}
+
+void
 network_build(network* const net){
+	reset_pass_index(net);
 	sort_connections(net, NULL, net->input, net->input->pass_index+1);
 	allocate_weights(net, net->mem, net->input, net->input->pass_index+1);
 	reset_simulation_flags(net, net->input);
@@ -2248,28 +2256,79 @@ update_layer_connection_data(network* const net, layer* const node, uint64_t tar
 }
 
 void
-grow_network(network* const net, double** training_data, uint64_t samples, double** expected){
+grow_network(network* const net, double** training_data, uint64_t samples, double** expected, uint64_t epochs, uint64_t prune_epoch, uint64_t grow_epoch){
 	uint64_t in = network_register_layer(net, net->input);
 	uint64_t out = network_register_layer(net, net->output);
 	layer_link(net, net->mem, in, out);
 	network_build(net);
 	net->layers_weighted = 1;
-	layer* initial = layer_init(net->mem, 64, ACTIVATION_SIGMOID, 0);
+	layer* initial = grow_layer(net->mem);
 	network_compose_layer(net, initial);
-	uint64_t epochs = 100;
-	uint64_t prune_epoch = 10;
-	uint64_t grow_epoch = 50;
 	for (uint64_t i = 0;i<epochs;++i){
 		network_train(net, training_data, samples, expected);
 		if ((i+1)%prune_epoch == 0){
 			network_prune(net);
 			if ((i+1)%grow_epoch == 0){
-				layer* new = layer_init(net->mem, 64, ACTIVATION_SIGMOID, 0);
+				layer* new = grow_layer(net->mem);
 				network_compose_layer(net, new);
 			}
 		}
 	}
 	network_prune(net);
+}
+
+void
+grow_network_retrain(network* const net, double** training_data, uint64_t samples, double** expected, uint64_t epochs, uint64_t prune_epoch, uint64_t grow_epoch){
+	uint64_t in = network_register_layer(net, net->input);
+	uint64_t out = network_register_layer(net, net->output);
+	layer_link(net, net->mem, in, out);
+	network_build(net);
+	net->layers_weighted = 1;
+	layer* initial = grow_layer(net->mem);
+	uint64_t initial_id = network_register_layer(net, initial);
+	for (uint64_t i = 0;i<net->node_count-1;++i){
+		if (net->nodes[i] != net->output){
+			layer_link(net, net->mem, i, initial_id);
+		}
+		if (net->nodes[i] != net->input){
+			layer_link(net, net->mem, initial_id, i);
+		}
+	}
+	network_build(net);
+	for (uint64_t e = 0;e<epochs;++e){
+		network_train(net, training_data, samples, expected);
+		if ((e+1)%prune_epoch == 0){
+			network_prune(net);
+		}
+		if ((e+1) % grow_epoch == 0){
+			layer* new = grow_layer(net->mem);
+			uint64_t new_id = network_register_layer(net, new);
+			for (uint64_t i = 0;i<net->node_count;++i){
+				if (net->nodes[i] != net->output){
+					layer_link(net, net->mem, i, new_id);
+				}
+				if (net->nodes[i] != net->input){
+					layer_link(net, net->mem, new_id, i);
+				}
+			}
+			network_build(net);
+		}
+	}
+}
+
+layer*
+grow_layer(pool* const mem){
+	ACTIVATION_FUNC f = random()%ACTIVATION_COUNT;
+	double a = 0;
+	switch (f){
+		case ACTIVATION_RELU_PARAMETRIC:
+		case ACTIVATION_ELU:
+			a = (random()%10)/5;
+		default:
+			break;
+	}
+	uint64_t width = (random() % 16) * 16;
+	return layer_init(mem, width, f, a);
 }
 
 int
@@ -2320,7 +2379,11 @@ main(int argc, char** argv){
 			pos = 0;
 		}
 	}
-	grow_network(&net, training_data, samples, expected);
+	grow_network_retrain(
+		&net,
+		training_data, samples, expected,
+		1000, 100, 500
+	);
 	prediction_vector vec = predict_vector_batched(&net, &mem, &training_data, 1, net.batch_size, net.input->data.input.width);
 	printf("predicted %lu (%lf) \n", vec.class[0], vec.probability[0]);
 	pool_dealloc(&mem);
