@@ -272,7 +272,7 @@ prediction_vector predict_vector_batched(network* const net, pool* const mem, do
 void network_show(network* const net);
 
 void network_prune(network* const net);
-void network_compose_node(network* const net, layer* const node);
-void network_compose(network* const net);
+void network_compose_layer(network* const net, layer* const node);
+void update_layer_connection_data(network* const net, layer* const node, uint64_t target_id);
 
 #endif

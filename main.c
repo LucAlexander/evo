@@ -161,7 +161,7 @@ input_init(pool* const mem, uint64_t width){
 	input->prev_count = 0;
 	input->prev_capacity = 0;
 	input->next = pool_request(mem, 2*sizeof(uint64_t));
-	input->next_count = 0;
+input->next_count = 0;
 	input->next_capacity = 2;
 	input->simulated = 0;
 	input->pass_index = 0;
@@ -271,7 +271,7 @@ layer_unlink(network* const net, uint64_t a, uint64_t b){
 			found = 1;
 		}
 		else if (found == 1){
-			node_a->next[i-1] = node_a->next[i];
+node_a->next[i-1] = node_a->next[i];
 		}
 	}
 	assert(found == 1);
@@ -2169,28 +2169,88 @@ network_prune(network* const net){
 }
 
 void
-network_compose_node(network* const net, layer* const node){
-	network_register_layer(net, node);
-	//TODO
+network_compose_layer(network* const net, layer* const new){
+	uint64_t id = network_register_layer(net, new);
+	for (uint64_t i = 0;i<net->node_count;++i){
+		layer* node = net->nodes[i];
+		if (node != net->output){
+			layer_link(net, net->mem, i, id);
+			update_layer_connection_data(net, new, i);
+		}
+		if (node != net->input){
+			layer_link(net, net->mem, id, i);
+			update_layer_connection_data(net, node, id);
+		}
+	}
 }
 
 void
-network_compose(network* const net){
-	for (uint64_t i = 0;i<net->node_count;++i){
-		for (uint64_t k = 0;k<net->node_count;++k){
-			if (net->nodes[k] == net->input){
-				continue;
-			}
-			layer_link(net, net->mem, i, k);
+update_layer_connection_data(network* const net, layer* const node, uint64_t target_id){
+	uint64_t target_index = 0;
+	uint64_t target_weight_index = 0;
+	for (uint64_t i = 0;i<node->prev_count;++i){
+		if (node->prev[i] == target_id){
+			target_index = i;
+			break;
 		}
+		target_weight_index += net->nodes[node->prev[i]]->data.layer.width;
 	}
+	uint64_t newsize = 0;
+	layer* target_node = net->nodes[target_id];
+	uint64_t target_size = target_node->data.layer.width;
+	for (uint64_t i = 0;i<node->prev_count;++i){
+		newsize += net->nodes[i]->data.layer.width;
+	}
+	for (uint64_t i = 0;i<node->data.layer.width;++i){
+#ifdef __SSE__
+		double* new_weights = pool_request_aligned(net->mem, sizeof(double)*newsize, SSE_ALIGNMENT);
+		double* new_weight_gradients = pool_request_aligned(net->mem, sizeof(double)*newsize, SSE_ALIGNMENT);
+#else
+		double* new_weights = pool_request(net->mem, sizeof(double)*newsize);
+		double* new_weight_gradients = pool_request(net->mem, sizeof(double)*newsize);
+#endif
+		memset(new_weight_gradients, 0, newsize*sizeof(double));
+		weight_inits[net->weight](
+			&new_weights,
+			newsize, 1,
+			net->weight_parameter_a,
+			net->weight_parameter_b
+		);
+		memcpy(new_weights, node->data.layer.weights[i], target_weight_index*sizeof(double));
+		memcpy(
+			&new_weights[target_weight_index+target_size],
+			&node->data.layer.weights[i][target_weight_index],
+			(newsize-(target_weight_index+target_size))*sizeof(double)
+		);
+		node->data.layer.weight_gradients[i] = new_weight_gradients;
+		node->data.layer.weights[i] = new_weights;
+	}
+#ifdef __SSE__
+	double* new_prev_weights = pool_request_aligned(net->mem, sizeof(double)*node->prev_count, SSE_ALIGNMENT);
+	double* new_prev_weight_gradients = pool_request_aligned(net->mem, sizeof(double)*node->prev_count, SSE_ALIGNMENT);
+#else
+	double* new_prev_weights = pool_request(net->mem, sizeof(double)*node->prev_count);
+	double* new_prev_weight_gradients = pool_request(net->mem, sizeof(double)*node->prev_count);
+#endif
+	memset(new_prev_weight_gradients, 0, node->prev_count*sizeof(double));
+	memcpy(new_prev_weights, node->data.layer.prev_weights, node->prev_count*sizeof(double));
+	for (uint64_t i = node->prev_count;i>target_index;--i){
+		new_prev_weights[i] = new_prev_weights[i-1];
+	}
+	layer_weight_inits[net->layer_weight](
+		new_prev_weights,
+		1,
+		net->prev_parameter_a,
+		net->prev_parameter_b
+	);
+	node->data.layer.prev_weights = new_prev_weights;
+	node->data.layer.prev_weight_gradients = new_prev_weight_gradients;
 }
 
 int
 main(int argc, char** argv){
 	set_seed(time(NULL));
 	pool mem = pool_alloc(TEMP_POOL_SIZE, POOL_STATIC);
-
 
 
 	layer* input = input_init(&mem, 8);
