@@ -161,7 +161,7 @@ input_init(pool* const mem, uint64_t width){
 	input->prev_count = 0;
 	input->prev_capacity = 0;
 	input->next = pool_request(mem, 2*sizeof(uint64_t));
-input->next_count = 0;
+	input->next_count = 0;
 	input->next_capacity = 2;
 	input->simulated = 0;
 	input->pass_index = 0;
