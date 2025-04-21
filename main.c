@@ -10,7 +10,6 @@ static activation_function activations[] = {
 	activation_sigmoid,
 	activation_relu,
 	activation_tanh,
-	activation_binary_step,
 	activation_linear,
 	activation_relu_leaky,
 	activation_relu_parametric,
@@ -417,6 +416,10 @@ forward(network* const net, layer* const node, uint64_t pass_index){
 			for (uint64_t p = 0;p<node->prev_count;++p){
 				layer* prev = net->nodes[node->prev[p]];
 				if (prev->simulated == 0){
+					weight_index += prev->data.layer.width;
+					continue;
+				}
+				if ((node->data.layer.prev_weights[p] == 0) && (net->layers_weighted == 1)){
 					weight_index += prev->data.layer.width;
 					continue;
 				}
@@ -1656,26 +1659,6 @@ activation_tanh(double* const buffer, const double* const output, uint64_t size,
 }
 
 void
-activation_binary_step(double* const buffer, const double* const output, uint64_t size, double a){
-#ifdef __SSE__
-	const __m128d zero = _mm_setzero_pd();
-	uint64_t i;
-	for (i = 0;i+DOUBLE_DIV<=size;i+=DOUBLE_DIV){
-		__m128d x = _mm_load_pd(output+i);
-		__m128d step = _mm_cmpge_pd(x, zero);
-		_mm_store_pd(buffer+i, step);
-	}
-	for (;i<size;++i){
-		buffer[i] = output[i] >= 0;
-	}
-#else
-	for (uint64_t i = 0;i<size;++i){
-		buffer[i] = output[i] >= 0;
-	}
-#endif
-}
-
-void
 activation_linear(double* const buffer, const double* const output, uint64_t size, double a){
 	memcpy(buffer, output, size*sizeof(double));
 }
@@ -2208,6 +2191,77 @@ network_compose_layer(network* const net, layer* const new){
 }
 
 void
+layer_link_built(network* const net, uint64_t source, uint64_t dest){
+	layer_link(net, net->mem, source, dest);
+	sort_connections(net, NULL, net->input, net->input->pass_index+1);
+	layer* node = net->nodes[dest];
+	layer* prev = net->nodes[source];
+	uint64_t target_weight_index = 0;
+	uint64_t prev_weight_index = 0;
+	for (uint64_t i = 0;i<node->prev_count;++i){
+		if (node->prev[i] == source){
+			prev_weight_index = i;
+			break;
+		}
+		target_weight_index += net->nodes[node->prev[i]]->data.layer.width;
+	}
+	uint64_t size = 0;
+	for (uint64_t i = 0;i<node->prev_count;++i){
+		if (node->prev[i] == source){
+			continue;
+		}
+		size += net->nodes[node->prev[i]]->data.layer.width;
+	}
+	uint64_t newsize = size + prev->data.layer.width;
+	for (uint64_t i = 0;i<node->data.layer.width;++i){
+#ifdef __SSE__
+		double* new_weights = pool_request_aligned(net->mem, sizeof(double)*newsize, SSE_ALIGNMENT);
+		double* new_weight_gradients = pool_request_aligned(net->mem, sizeof(double)*newsize, SSE_ALIGNMENT);
+#else
+		double* new_weights = pool_request(net->mem, sizeof(double)*newsize);
+		double* new_weight_gradients = pool_request(net->mem, sizeof(double)*newsize);
+#endif
+		memset(new_weight_gradients, 0, newsize*sizeof(double));
+		weight_inits[net->weight](
+			&new_weights,
+			newsize, 1,
+			net->weight_parameter_a,
+			net->weight_parameter_b
+		);
+		memcpy(new_weights, node->data.layer.weights[i], target_weight_index*sizeof(double));
+		memcpy(
+			&new_weights[target_weight_index+prev->data.layer.width],
+			&node->data.layer.weights[i][target_weight_index],
+			(size-target_weight_index)*sizeof(double)
+		);
+		node->data.layer.weight_gradients[i] = new_weight_gradients;
+		node->data.layer.weights[i] = new_weights;
+	}
+#ifdef __SSE__
+	double* new_prev_weights = pool_request_aligned(net->mem, sizeof(double)*node->prev_count, SSE_ALIGNMENT);
+	double* new_prev_weight_gradients = pool_request_aligned(net->mem, sizeof(double)*node->prev_count, SSE_ALIGNMENT);
+#else
+	double* new_prev_weights = pool_request(net->mem, sizeof(double)*node->prev_count);
+	double* new_prev_weight_gradients = pool_request(net->mem, sizeof(double)*node->prev_count);
+#endif
+	memset(new_prev_weight_gradients, 0, node->prev_count*sizeof(double));
+	layer_weight_inits[net->layer_weight](
+		new_prev_weights,
+		node->prev_count,
+		net->prev_parameter_a,
+		net->prev_parameter_b
+	);
+	memcpy(new_prev_weights, node->data.layer.prev_weights, prev_weight_index*sizeof(double));
+	memcpy(
+		&new_prev_weights[prev_weight_index+1],
+		&node->data.layer.prev_weights[prev_weight_index],
+		((node->prev_count-1)-prev_weight_index)*sizeof(double)
+	);
+	node->data.layer.prev_weights = new_prev_weights;
+	node->data.layer.prev_weight_gradients = new_prev_weight_gradients;
+}
+
+void
 update_layer_connection_data(network* const net, layer* const node, uint64_t target_id){
 	uint64_t target_weight_index = 0;
 	for (uint64_t i = 0;i<node->prev_count;++i){
@@ -2225,16 +2279,16 @@ update_layer_connection_data(network* const net, layer* const node, uint64_t tar
 		double* new_weights = pool_request(net->mem, sizeof(double)*newsize);
 		double* new_weight_gradients = pool_request(net->mem, sizeof(double)*newsize);
 #endif
-		memset(new_weight_gradients, 0, newsize*sizeof(double));
-		weight_inits[net->weight](
+		memset(new_weight_gradients, 0, newsize*sizeof(double)); // allocate new buffer with correct size
+		weight_inits[net->weight]( // initialize weights for the whole buffer so we can copy over everything but the end bit
 			&new_weights,
 			newsize, 1,
 			net->weight_parameter_a,
 			net->weight_parameter_b
 		);
-		memcpy(new_weights, node->data.layer.weights[i], target_weight_index*sizeof(double));
+		memcpy(new_weights, node->data.layer.weights[i], target_weight_index*sizeof(double)); // copy everything but the end from the original buffer
 		node->data.layer.weight_gradients[i] = new_weight_gradients;
-		node->data.layer.weights[i] = new_weights;
+		node->data.layer.weights[i] = new_weights; // replace
 	}
 #ifdef __SSE__
 	double* new_prev_weights = pool_request_aligned(net->mem, sizeof(double)*node->prev_count, SSE_ALIGNMENT);
@@ -2243,7 +2297,7 @@ update_layer_connection_data(network* const net, layer* const node, uint64_t tar
 	double* new_prev_weights = pool_request(net->mem, sizeof(double)*node->prev_count);
 	double* new_prev_weight_gradients = pool_request(net->mem, sizeof(double)*node->prev_count);
 #endif
-	memset(new_prev_weight_gradients, 0, node->prev_count*sizeof(double));
+	memset(new_prev_weight_gradients, 0, node->prev_count*sizeof(double)); // this is the same pattern as above but for a single element
 	memcpy(new_prev_weights, node->data.layer.prev_weights, (node->prev_count-1)*sizeof(double));
 	layer_weight_inits[net->layer_weight](
 		new_prev_weights,
@@ -2331,6 +2385,58 @@ grow_layer(pool* const mem){
 	return layer_init(mem, width, f, a);
 }
 
+void
+network_rebuild(network* const net){
+	reset_pass_index(net);
+	sort_connections(net, NULL, net->input, net->input->pass_index+1); // was likely already done when linking mutations
+	reset_simulation_flags(net, net->input);
+}
+
+void
+grow_network_sparse(network* const net, double** training_data, uint64_t samples, double** expected, uint64_t epochs, uint64_t prune_epoch, uint64_t grow_epoch){
+	layer* initial = grow_layer(net->mem);
+	uint64_t in = network_register_layer(net, net->input);
+	uint64_t out = network_register_layer(net, net->output);
+	uint64_t init = network_register_layer(net, initial);
+	layer_link(net, net->mem, in, init);
+	layer_link(net, net->mem, init, out);
+	network_build(net);
+	net->layers_weighted = 1;
+	/* convention for adding a node:
+	     register
+	     link to and from desired with layer_link_built
+	     call network_rebuild
+	*/
+	for (uint64_t i = 0;i<epochs;++i){
+		network_train(net, training_data, samples, expected);
+		if (i%prune_epoch == 0){
+			if (i==0){
+				continue;
+			}
+			network_prune(net);
+			printf("pruned\n");
+			if (i%grow_epoch == 0){
+				layer* new = grow_layer(net->mem);
+				uint64_t newid = network_register_layer(net, new);
+				uint64_t in_id = rand() % net->node_count;
+				uint64_t out_id = rand() % net->node_count;
+				while ((net->nodes[in_id] == net->output) || (net->nodes[out_id] == net->input)){
+					in_id = rand() % net->node_count;
+					out_id = rand() % net->node_count;
+				}
+				allocate_node_weights(net, net->mem, new);
+				zero_node_gradients(net, new);
+				layer_link_built(net, in_id, newid);
+				layer_link_built(net, newid, out_id);
+				network_rebuild(net);
+				printf("grew\n");
+			}
+		}
+	}
+	network_prune(net);
+
+}
+
 int
 main(int argc, char** argv){
 	set_seed(time(NULL));
@@ -2342,7 +2448,7 @@ main(int argc, char** argv){
 		input, output,
 		WEIGHT_INITIALIZATION_XAVIER,
 		BIAS_INITIALIZATION_ZERO,
-		LAYER_WEIGHT_INITIALIZATION_STRONG,
+		LAYER_WEIGHT_INITIALIZATION_NORMAL,
 		ACTIVATION_RELU,
 		1, 2,
 		0, 0,
@@ -2379,7 +2485,7 @@ main(int argc, char** argv){
 			pos = 0;
 		}
 	}
-	grow_network_retrain(
+	grow_network_sparse(
 		&net,
 		training_data, samples, expected,
 		1000, 100, 500
