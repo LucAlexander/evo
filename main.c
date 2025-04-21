@@ -2416,20 +2416,33 @@ grow_network_sparse(network* const net, double** training_data, uint64_t samples
 			network_prune(net);
 			printf("pruned\n");
 			if (i%grow_epoch == 0){
-				layer* new = grow_layer(net->mem);
-				uint64_t newid = network_register_layer(net, new);
-				uint64_t in_id = rand() % net->node_count;
-				uint64_t out_id = rand() % net->node_count;
-				while ((net->nodes[in_id] == net->output) || (net->nodes[out_id] == net->input)){
-					in_id = rand() % net->node_count;
-					out_id = rand() % net->node_count;
+				switch (rand()%2){
+				case 0:
+					layer* new = grow_layer(net->mem);
+					uint64_t newid = network_register_layer(net, new);
+					uint64_t in_id = rand() % net->node_count;
+					uint64_t out_id = rand() % net->node_count;
+					while ((net->nodes[in_id] == net->output) || (net->nodes[out_id] == net->input)){
+						in_id = rand() % net->node_count;
+						out_id = rand() % net->node_count;
+					}
+					allocate_node_weights(net, net->mem, new);
+					zero_node_gradients(net, new);
+					layer_link_built(net, in_id, newid);
+					layer_link_built(net, newid, out_id);
+					network_rebuild(net);
+					printf("grew\n");
+				case 1:
+					uint64_t src_id = rand() % net->node_count;
+					uint64_t dst_id = rand() % net->node_count;
+					while ((net->nodes[src_id] == net->output) || (net->nodes[dst_id] == net->input)){
+						src_id = rand() % net->node_count;
+						dst_id = rand() % net->node_count;
+					}
+					layer_link_built(net, src_id, dst_id);
+					network_rebuild(net);
+					printf("connected\n");
 				}
-				allocate_node_weights(net, net->mem, new);
-				zero_node_gradients(net, new);
-				layer_link_built(net, in_id, newid);
-				layer_link_built(net, newid, out_id);
-				network_rebuild(net);
-				printf("grew\n");
 			}
 		}
 	}
