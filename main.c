@@ -2192,10 +2192,15 @@ network_compose_layer(network* const net, layer* const new){
 
 void
 layer_link_built(network* const net, uint64_t source, uint64_t dest){
-	layer_link(net, net->mem, source, dest);
-	sort_connections(net, NULL, net->input, net->input->pass_index+1);
 	layer* node = net->nodes[dest];
 	layer* prev = net->nodes[source];
+	for (uint64_t i = 0;i<node->prev_count;++i){
+		if (node->prev[i] == source){
+			return;
+		}
+	}
+	layer_link(net, net->mem, source, dest);
+	sort_connections(net, NULL, net->input, net->input->pass_index+1);
 	uint64_t target_weight_index = 0;
 	uint64_t prev_weight_index = 0;
 	for (uint64_t i = 0;i<node->prev_count;++i){
