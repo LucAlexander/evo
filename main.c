@@ -627,13 +627,11 @@ backward(network* const net, layer* const node){
 			}
 		}
 	}
-	if (node->prev_count > 1){
-		if (node->branched == 1){
-			backward(net, net->nodes[node->prev[node->back_direction]]);
-			return;
-		}
-		node->branched = 1;
+	if (node->branched == 1){
+		backward(net, net->nodes[node->prev[node->back_direction]]);
+		return;
 	}
+	node->branched = 1;
 	for (uint64_t i = 0;i<node->prev_count;++i){
 		backward(net, net->nodes[node->prev[i]]);
 	}
@@ -2195,9 +2193,7 @@ layer_link_built(network* const net, uint64_t source, uint64_t dest){
 	layer* node = net->nodes[dest];
 	layer* prev = net->nodes[source];
 	for (uint64_t i = 0;i<node->prev_count;++i){
-		if (node->prev[i] == source){
-			return;
-		}
+		assert(node->prev[i] != source);
 	}
 	layer_link(net, net->mem, source, dest);
 	sort_connections(net, NULL, net->input, net->input->pass_index+1);
@@ -2427,7 +2423,10 @@ grow_network_sparse(network* const net, double** training_data, uint64_t samples
 					uint64_t newid = network_register_layer(net, new);
 					uint64_t in_id = rand() % net->node_count;
 					uint64_t out_id = rand() % net->node_count;
-					while ((net->nodes[in_id] == net->output) || (net->nodes[out_id] == net->input)){
+					while ((net->nodes[in_id] == net->output)
+					    || (net->nodes[out_id] == net->input)
+						|| (in_id == newid || out_id == newid)
+					){
 						in_id = rand() % net->node_count;
 						out_id = rand() % net->node_count;
 					}
@@ -2437,16 +2436,31 @@ grow_network_sparse(network* const net, double** training_data, uint64_t samples
 					layer_link_built(net, newid, out_id);
 					network_rebuild(net);
 					printf("grew\n");
+					break;
 				case 1:
-					uint64_t src_id = rand() % net->node_count;
-					uint64_t dst_id = rand() % net->node_count;
-					while ((net->nodes[src_id] == net->output) || (net->nodes[dst_id] == net->input)){
+					uint8_t valid = 0;
+					uint64_t src_id;
+					uint64_t dst_id;
+					while (!valid){
 						src_id = rand() % net->node_count;
 						dst_id = rand() % net->node_count;
+						while ((net->nodes[src_id] == net->output) || (net->nodes[dst_id] == net->input)){
+							src_id = rand() % net->node_count;
+							dst_id = rand() % net->node_count;
+						}
+						layer* dstnode = net->nodes[dst_id];
+						valid = 1;
+						for (uint64_t p = 0;p<dstnode->prev_count;++p){
+							if (dstnode->prev[p] == src_id){
+								valid = 0;
+								break;
+							}
+						}
 					}
 					layer_link_built(net, src_id, dst_id);
 					network_rebuild(net);
 					printf("connected\n");
+					break;
 				}
 			}
 		}
@@ -2506,7 +2520,7 @@ main(int argc, char** argv){
 	grow_network_sparse(
 		&net,
 		training_data, samples, expected,
-		1000, 100, 500
+		1000, 100, 200
 	);
 	prediction_vector vec = predict_vector_batched(&net, &mem, &training_data, 1, net.batch_size, net.input->data.input.width);
 	printf("predicted %lu (%lf) \n", vec.class[0], vec.probability[0]);
