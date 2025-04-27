@@ -31,8 +31,8 @@ The backward pass receives a reciprocal modification, wherein the gradient is pr
 
 Each connection in a reduced graph is given its own trainable weight parameter $p$. The layer calculation needs to take this into account.
 
-$$z^{l}_{i} = b^{l}_{i} + \sum_{k} w_{ik}a^{l-1}_{k}p^{l} $$
-$$a^{l}_{i} = \sigma(z^{l}_{i})$$
+$$z_{il} = b_{il} + \sum_{k} w_{ik}a_{kl-1}p_{l} $$
+$$a_{il} = \sigma(z_{il})$$
 
 Since these weights effect the final loss, they also effect the equations for the gradients of all other learnable parameters. We also include a calculation for the gradient of the layer weight parameter so that it may also be trained. 
 
