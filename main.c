@@ -1973,7 +1973,7 @@ load_nodes(network* const net, pool* const mem, FILE* infile){
 			net->input = node;
 		}
 		fread(&node->next_count, sizeof(uint64_t), 1, infile);
-		node->next_capacity = node->next_count;
+node->next_capacity = node->next_count;
 		node->next = pool_request(mem, sizeof(uint64_t)*node->next_capacity);
 		fread(&node->next, sizeof(uint64_t), node->next_count, infile);
 		if (node->next_count == 0){
@@ -2045,7 +2045,7 @@ load_network(pool* const mem, const char* filename){
 	fread(&net.gradient_clamp, sizeof(double), 1, infile);
 	fread(&net.prune, sizeof(ACTIVATION_FUNC), 1, infile);
 	fread(&net.prune_parameter_a, sizeof(double), 1, infile);
-	net.nodes = pool_request(mem, sizeof(uint64_t)*net.node_capacity);
+	net.nodes = pool_request(mem, sizeof(layer*)*net.node_capacity);
 	load_nodes(&net, mem, infile);
 	fclose(infile);
 #ifdef __SSE__
@@ -2466,7 +2466,110 @@ grow_network_sparse(network* const net, double** training_data, uint64_t samples
 		}
 	}
 	network_prune(net);
+}
 
+layer* 
+deep_copy_node(network* const net, layer* const source, pool* const mem){
+	layer* dest = pool_request(mem, sizeof(layer));
+	dest->tag = source->tag;
+	dest->data.layer.width = source->data.layer.width;
+#ifdef __SSE__
+	dest->data.layer.output = pool_request_aligned(mem, sizeof(double)*source->data.layer.width, SSE_ALIGNMENT);
+#else
+	dest->data.layer.output = pool_request(mem, sizeof(double)*source->data.layer.width);
+#endif
+	if (dest->tag == LAYER_NODE){
+		uint64_t sum = 0;
+		for (uint64_t i = 0;i<source->prev_count;++i){
+			sum += net->nodes[source->prev[i]]->data.layer.width;
+		}
+		dest->prev_count = source->prev_count;
+#ifdef __SSE__
+		dest->data.layer.prev_weights = pool_request_aligned(mem, sizeof(double)*source->prev_count, SSE_ALIGNMENT);
+		dest->data.layer.weights = pool_request_aligned(mem, sizeof(double*)*source->data.layer.width, SSE_ALIGNMENT);
+		dest->data.layer.weight_gradients = pool_request_aligned(mem, sizeof(double*)*source->data.layer.width, SSE_ALIGNMENT);
+		dest->data.layer.bias = pool_request_aligned(mem, sizeof(double)*source->data.layer.width, SSE_ALIGNMENT);
+		dest->data.layer.activated = pool_request_aligned(mem, sizeof(double)*source->data.layer.width, SSE_ALIGNMENT);
+		dest->data.layer.bias_gradients = pool_request_aligned(mem, sizeof(double)*source->data.layer.width, SSE_ALIGNMENT);
+		dest->data.layer.activation_gradients = pool_request_aligned(mem, sizeof(double)*source->data.layer.width, SSE_ALIGNMENT);
+
+#else
+		dest->data.layer.prev_weights = pool_request(mem, sizeof(double)*source->prev_count);
+		dest->data.layer.weights = pool_request(mem, sizeof(double*)*source->data.layer.width);
+		dest->data.layer.weight_gradients = pool_request(mem, sizeof(double*)*source->data.layer.width);
+		dest->data.layer.bias = pool_request(mem, sizeof(double)*source->data.layer.width);
+		dest->data.layer.activated = pool_request(mem, sizeof(double)*source->data.layer.width);
+		dest->data.layer.bias_gradients = pool_request(mem, sizeof(double)*source->data.layer.width);
+		dest->data.layer.activation_gradients = pool_request(mem, sizeof(double)*source->data.layer.width);
+#endif
+		memcpy(dest->data.layer.prev_weights, source->data.layer.prev_weights, source->prev_count*sizeof(double));
+		for (uint64_t i = 0;i<source->data.layer.width;++i){
+#ifdef __SSE__
+			dest->data.layer.weights[i] = pool_request_aligned(mem, sizeof(double)*sum, SSE_ALIGNMENT);
+			dest->data.layer.weight_gradients[i] = pool_request_aligned(mem, sizeof(double)*sum, SSE_ALIGNMENT);
+#else
+			dest->data.layer.weights[i] = pool_request(mem, sizeof(double)*sum);
+			dest->data.layer.weight_gradients[i] = pool_request(mem, sizeof(double)*sum);
+#endif
+			memcpy(dest->data.layer.weights[i], source->data.layer.weights, sum*sizeof(double));
+		}
+		memcpy(dest->data.layer.bias, source->data.layer.bias, source->data.layer.width*sizeof(double));
+		dest->data.layer.activation = source->data.layer.activation;
+		dest->data.layer.derivative = source->data.layer.derivative;
+		dest->data.layer.parameter_a = source->data.layer.parameter_a;
+	}
+	else {
+		net->input = dest;
+	}
+	dest->next_count = source->next_count;
+	dest->next_capacity = dest->next_count;
+	if (dest->next_count == 0){
+		net->output = dest;
+	}
+	dest->pass_index = 0;
+	dest->back_direction = source->back_direction;
+	dest->simulated = source->simulated;
+	dest->prev_count = source->prev_count;
+	dest->prev_capacity = dest->prev_count;
+	dest->data.layer.gradient_count = 0;
+	dest->next = pool_request(mem, sizeof(uint64_t)*dest->next_count);
+	dest->prev = pool_request(mem, sizeof(uint64_t)*dest->prev_count);
+	memcpy(dest->next, source->next, dest->next_count*sizeof(uint64_t));
+	memcpy(dest->prev, source->prev, dest->prev_count*sizeof(uint64_t));
+	return dest;
+}
+
+network*
+deep_copy_network(network* const source, pool* const mem){
+	network* new = pool_request(mem, sizeof(network));
+	new->loss = source->loss;
+	new->derivative = source->derivative;
+	new->bias = source->bias;
+	new->weight = source->weight;
+	new->layer_weight = source->layer_weight;
+	new->batch_size = source->batch_size;
+	new->learning_rate = source->learning_rate;
+	new->loss_parameter_a = source->loss_parameter_a;
+	new->weight_parameter_a = source->weight_parameter_a;
+	new->weight_parameter_b = source->weight_parameter_b;
+	new->bias_parameter_a = source->bias_parameter_a;
+	new->bias_parameter_b = source->bias_parameter_b;
+	new->node_capacity = source->node_capacity;
+	new->prev_parameter_a = source->prev_parameter_a;
+	new->prev_parameter_b = source->prev_parameter_b;
+	new->gradient_clamp = source->gradient_clamp;
+	new->prune = source->prune;
+	new->prune_parameter_a = source->prune_parameter_a;
+	new->nodes = pool_request(mem, sizeof(layer*)*new->node_capacity);
+#ifdef __SSE__
+	new->loss_output = pool_request_aligned(mem, sizeof(double)*source->input->data.input.width, SSE_ALIGNMENT);
+#else
+	new->loss_output = pool_request(mem, sizeof(double)*source->input->data.input.width);
+#endif
+	for (uint64_t i = 0;i<new->node_count;++i){
+		new->nodes[i] = deep_copy_node(source, source->nodes[i], mem);
+	}
+	return new;
 }
 
 int
