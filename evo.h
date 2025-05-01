@@ -5,7 +5,8 @@
 #include <time.h>
 #include <stdio.h>
 
-#define WRITE_LOSS
+//#define WRITE_LOSS
+#define WRITE_LOSS_GENETIC
 
 #ifdef __SSE__
 #include <xmmintrin.h>
@@ -287,7 +288,7 @@ void network_rebuild(network* const net);
 void grow_network_sparse(network* const net, double** training_data, uint64_t samples, double** expected, uint64_t epochs, uint64_t prune_epoch, uint64_t grow_epoch);
 
 void grow_genetic(pool* const mem, double** training_data, uint64_t samples, double** expected, uint64_t epochs, uint64_t prune_epoch, uint64_t grow_epoch, uint64_t fork_count, uint64_t mutation_count, uint64_t initial_depth);
-layer* deep_copy_node(network* const net, layer* const source, pool* const mem);
+layer* deep_copy_node(network* const source_net, network* const net, layer* const source, pool* const mem);
 network* deep_copy_network(network* const source, pool* const mem);
 
 

@@ -2473,7 +2473,7 @@ grow_network_sparse(network* const net, double** training_data, uint64_t samples
 }
 
 layer* 
-deep_copy_node(network* const net, layer* const source, pool* const mem){
+deep_copy_node(network* const source_net, network* const net, layer* const source, pool* const mem){
 	layer* dest = pool_request(mem, sizeof(layer));
 	dest->tag = source->tag;
 	dest->data.layer.width = source->data.layer.width;
@@ -2485,7 +2485,7 @@ deep_copy_node(network* const net, layer* const source, pool* const mem){
 	if (dest->tag == LAYER_NODE){
 		uint64_t sum = 0;
 		for (uint64_t i = 0;i<source->prev_count;++i){
-			sum += net->nodes[source->prev[i]]->data.layer.width;
+			sum += source_net->nodes[source->prev[i]]->data.layer.width;
 		}
 		dest->prev_count = source->prev_count;
 #ifdef __SSE__
@@ -2546,6 +2546,7 @@ network*
 deep_copy_network(network* const source, pool* const mem){
 	network* new = pool_request(mem, sizeof(network));
 	new->mem = mem;
+	new->temp = pool_alloc(TEMP_POOL_SIZE, POOL_STATIC);
 	new->loss = source->loss;
 	new->derivative = source->derivative;
 	new->bias = source->bias;
@@ -2558,6 +2559,7 @@ deep_copy_network(network* const source, pool* const mem){
 	new->weight_parameter_b = source->weight_parameter_b;
 	new->bias_parameter_a = source->bias_parameter_a;
 	new->bias_parameter_b = source->bias_parameter_b;
+	new->node_count = source->node_count;
 	new->node_capacity = source->node_capacity;
 	new->prev_parameter_a = source->prev_parameter_a;
 	new->prev_parameter_b = source->prev_parameter_b;
@@ -2571,7 +2573,7 @@ deep_copy_network(network* const source, pool* const mem){
 	new->loss_output = pool_request(mem, sizeof(double)*source->input->data.input.width);
 #endif
 	for (uint64_t i = 0;i<new->node_count;++i){
-		new->nodes[i] = deep_copy_node(source, source->nodes[i], mem);
+		new->nodes[i] = deep_copy_node(source, new, source->nodes[i], mem);
 	}
 	return new;
 }
@@ -2709,10 +2711,16 @@ grow_genetic(pool* const mem, double** training_data, uint64_t samples, double**
 			uint8_t min_loss_tracker = 0;
 			double min_loss = loss[0];
 			for (uint64_t f = 0;f<fork_count;++f){
+#ifdef WRITE_LOSS_GENETIC
+				printf("%lf ", loss[f]);
+#endif
 				if (loss[f] < min_loss){
 					min_loss_tracker = f;
 				}
 			}
+#ifdef WRITE_LOSS_GENETIC
+			printf("\n");
+#endif
 			net = *nets[min_loss_tracker];
 			for (uint64_t f = 0;f<fork_count;++f){
 				pool_empty(&swp[f]);
