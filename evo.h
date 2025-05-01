@@ -295,4 +295,28 @@ void mutation_search_exhaustive(pool* const mem, double** training_data, uint64_
 void supergraph_compose(network* const net, ACTIVATION_FUNC node_activation, uint64_t layer_width, double layer_param, uint64_t width, uint64_t depth, uint8_t full_compose);
 double network_train_prune_loop( network* const net, double** training_data, uint64_t samples, double** expected, uint64_t epochs, uint64_t prune_epoch);
 
+typedef struct supergraph_param_set {
+	WEIGHT_FUNC wi;
+	BIAS_FUNC bi;
+	LAYER_WEIGHT_FUNC li;
+	ACTIVATION_FUNC prune;
+	ACTIVATION_FUNC activation;
+	LOSS_FUNC loss;
+	double wa;
+	double wb;
+	double ba;
+	double bb;
+	double la;
+	double lb;
+	double pa;
+	double layer_param;
+	uint64_t epochs;
+	uint64_t prune_epoch;
+	uint64_t supergraph_width;
+	uint64_t supergraph_depth;
+	uint64_t layer_width;
+	uint8_t layers_weighted;
+	uint8_t full_compose;
+} supergraph_param_set;
+
 #endif

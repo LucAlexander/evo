@@ -2865,6 +2865,93 @@ network_train_prune_loop(
 	return network_train(net, training_data, samples, expected);
 }
 
+void
+supergraph_ablation(){
+	set_seed(time(NULL));
+	pool mem = pool_alloc(TEMP_POOL_SIZE, POOL_STATIC);
+	uint64_t input_width = 8;
+	uint64_t output_width = 8;
+	uint64_t samples = 512;
+	double** training_data = pool_request(&mem, sizeof(double*)*samples);
+	uint8_t pos = 0;
+	for (uint32_t i = 0;i<samples;++i){
+		training_data[i] = pool_request(&mem, sizeof(double)*input_width);
+		for (uint32_t k = 0;k<input_width;++k){
+			training_data[i][k] = 0;
+		}
+		training_data[i][pos] = 1;
+		pos += 1;
+		if (pos == 8){
+			pos = 0;
+		}
+	}
+	pos = 0;
+	double** expected = pool_request(&mem, sizeof(double*)*samples);
+	for (uint32_t i = 0;i<samples;++i){
+		expected[i] = pool_request(&mem, sizeof(double)*output_width);
+		for (uint32_t k = 0;k<output_width;++k){
+			expected[i][k] = 0;
+		}
+		expected[i][pos] = 1;
+		pos += 1;
+		if (pos == 8){
+			pos = 0;
+		}
+	}
+	supergraph_param_set S[1] = {
+		{
+			WEIGHT_INITIALIZATION_XAVIER,
+			BIAS_INITIALIZATION_ZERO,
+			LAYER_WEIGHT_INITIALIZATION_NORMAL,
+			ACTIVATION_SIGMOID,
+			ACTIVATION_SIGMOID,
+			LOSS_MSE,
+			0, 0, 0, 0, 0, 0, 0,
+			1000, 10,
+			3, 3, 16,
+			1, 0
+		}
+	};
+	uint64_t len = sizeof(S)/sizeof(S[0]);
+	for (uint64_t i = 0;i<len;++i){
+		pool_save(&mem);
+		layer* input = input_init(&mem, input_width);
+		layer* output = layer_init(&mem, output_width, S[0].activation, 0);
+		network net = network_init(
+			&mem,
+			input, output,
+			S[0].wi,
+			S[0].bi,
+			S[0].li,
+			S[0].prune,
+			S[0].wa, S[0].wb, S[0].ba, S[0].bb, S[0].la, S[0].lb, S[0].pa,
+			16, 0.001,
+			5,
+			S[0].loss
+		);
+		supergraph_compose(
+			&net,
+			S[0].activation,
+			S[0].layer_width,
+			S[0].layer_param,
+			S[0].supergraph_width,
+			S[0].supergraph_depth,
+			S[0].full_compose
+		);
+		printf("supergraph composed\n");
+		double loss = network_train_prune_loop(
+			&net,
+			training_data,
+			samples,
+			expected,
+			S[0].epochs,
+			S[0].prune_epoch
+		);
+		pool_load(&mem);
+	}
+	pool_dealloc(&mem);
+}
+
 int
 main(int argc, char** argv){
 	set_seed(time(NULL));
