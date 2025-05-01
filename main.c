@@ -2642,7 +2642,18 @@ void mutate_network(network* const net){
 }
 
 void
-grow_genetic(pool* const mem, double** training_data, uint64_t samples, double** expected, uint64_t epochs, uint64_t prune_epoch, uint64_t grow_epoch, uint64_t fork_count, uint64_t mutation_count, uint64_t initial_depth){
+grow_genetic(
+	pool* const mem,
+	double** training_data,
+	uint64_t samples,
+	double** expected,
+	uint64_t epochs,
+	uint64_t prune_epoch,
+	uint64_t grow_epoch,
+	uint64_t fork_count,
+	uint64_t mutation_count,
+	uint64_t initial_depth
+){
 	assert(initial_depth > 0);
 	pool swp[fork_count];
 	network* nets[fork_count];
@@ -2695,10 +2706,14 @@ grow_genetic(pool* const mem, double** training_data, uint64_t samples, double**
 			}
 		}
 	}
+	pool_save(mem);
 	for (uint64_t i = 0;i<epochs;++i){
 		for (uint64_t f = 0;f<fork_count;++f){
 			loss[f] = network_train(nets[f], training_data, samples, expected);
 		}
+#ifdef WRITE_LOSS_GENETIC
+		printf("epoch: %lu\n", i);
+#endif
 		if (i==0) {
 			continue;
 		}
@@ -2706,6 +2721,9 @@ grow_genetic(pool* const mem, double** training_data, uint64_t samples, double**
 			for (uint64_t f = 0;f<fork_count;++f){
 				network_prune(nets[f]);
 			}
+#ifdef WRITE_LOSS_GENETIC
+			printf("pruned\n");
+#endif
 		}
 		if (i % grow_epoch == 0){
 			uint8_t min_loss_tracker = 0;
@@ -2721,7 +2739,8 @@ grow_genetic(pool* const mem, double** training_data, uint64_t samples, double**
 #ifdef WRITE_LOSS_GENETIC
 			printf("\n");
 #endif
-			net = *nets[min_loss_tracker];
+			pool_load(mem);
+			net = *deep_copy_network(nets[min_loss_tracker], mem);
 			for (uint64_t f = 0;f<fork_count;++f){
 				pool_empty(&swp[f]);
 				nets[f] = deep_copy_network(&net, &swp[f]);
@@ -2790,7 +2809,14 @@ main(int argc, char** argv){
 	//);
 	//prediction_vector vec = predict_vector_batched(&net, &mem, &training_data, 1, net.batch_size, net.input->data.input.width);
 	//printf("predicted %lu (%lf) \n", vec.class[0], vec.probability[0]);
-	grow_genetic(&mem, training_data, samples, expected, 1000, 100, 200, 4, 1, 2);
+	grow_genetic(&mem, training_data, samples, expected,
+		1000,
+		5,
+		10,
+		4,
+		1,
+		2
+	);
 	pool_dealloc(&mem);
 	return 0;
 }
