@@ -3014,6 +3014,7 @@ supergraph_ablation(){
 			S[0].supergraph_depth,
 			S[0].full_compose
 		);
+		net.layers_weighted = S[0].layers_weighted;
 		printf("supergraph composed\n");
 		uint64_t start = time(NULL);
 		double loss = network_train_prune_loop(
@@ -3025,7 +3026,7 @@ supergraph_ablation(){
 			S[0].prune_epoch
 		);
 #ifdef ABLATION_LOSS
-		printf("ablation loss: %lf (%lu s)\n", loss, time(NULL-start));
+		printf("ablation loss: %lf (%lu s)\n", loss, time(NULL)-start);
 #endif
 		pool_load(&mem);
 	}
