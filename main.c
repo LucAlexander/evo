@@ -2803,6 +2803,66 @@ mutation_search_exhaustive(
 		ACTIVATION_RELU,
 		ACTIVATION_SIGMOID
 	);
+	//NOTE incomplete
+}
+
+void
+supergraph_compose(network* const net, ACTIVATION_FUNC node_activation, uint64_t layer_width, double layer_param, uint64_t width, uint64_t depth, uint8_t full_compose){
+	uint64_t in = network_register_layer(net, net->input);
+	uint64_t out = network_register_layer(net, net->output);
+	for (uint64_t k = 0;k<width;++k){
+		uint64_t input_id = in;
+		for (uint64_t i = 0;i<depth;++i){
+			layer* node = layer_init(net->mem, layer_width, node_activation, layer_param);
+			uint64_t id = network_register_layer(net, node);
+			layer_link(net, net->mem, input_id, id);
+			for (uint64_t n = 0;n<net->node_count;++n){
+				if (net->nodes[n] == net->input || net->nodes[n] == net->output){
+					continue;
+				}
+				layer_link(net, net->mem, input_id, n);
+				if (full_compose == 1){
+					layer_link(net, net->mem, n, input_id);
+				}
+			}
+			input_id = id;
+		}
+		layer_link(net, net->mem, input_id, out);
+	}
+	network_build(net);
+	net->layers_weighted = 1;
+	/* convention for adding a node:
+	     register
+	     link to and from desired with layer_link_built
+	     call network_rebuild
+	*/
+}
+
+double
+network_train_prune_loop(
+	network* const net,
+	double** training_data,
+	uint64_t samples,
+	double** expected,
+	uint64_t epochs,
+	uint64_t prune_epoch
+){
+	for (uint64_t i = 0;i<epochs;++i){
+		double loss = network_train(net, training_data, samples, expected);
+#ifdef TRAIN_PRUNE_LOSS
+		printf("train prune loop loss: %lf\n", loss);
+#endif
+		if (i == 0){
+			continue;
+		}
+		if (i%prune_epoch == 0){
+			network_prune(net);
+#ifdef TRAIN_PRUNE_LOSS
+			printf("pruned\n");
+#endif
+		}
+	}
+	return network_train(net, training_data, samples, expected);
 }
 
 int
@@ -2853,9 +2913,20 @@ main(int argc, char** argv){
 			pos = 0;
 		}
 	}
-	mutation_search_exhaustive(&mem, training_data, samples, expected);
-	//prediction_vector vec = predict_vector_batched(&net, &mem, &training_data, 1, net.batch_size, net.input->data.input.width);
-	//printf("predicted %lu (%lf) \n", vec.class[0], vec.probability[0]);
+	{
+		supergraph_compose(&net, ACTIVATION_SIGMOID, 128, 0, 3, 3, 0);
+		printf("supergraph composed\n");
+		uint64_t epochs = 1000;
+		uint64_t prune_epoch = 10;
+		double loss = network_train_prune_loop(&net, training_data, samples, expected, epochs, prune_epoch);
+	}
+	if (0){
+		mutation_search_exhaustive(&mem, training_data, samples, expected);
+	}
+	if (0){
+		prediction_vector vec = predict_vector_batched(&net, &mem, &training_data, 1, net.batch_size, net.input->data.input.width);
+		printf("predicted %lu (%lf) \n", vec.class[0], vec.probability[0]);
+	}
 	pool_dealloc(&mem);
 	return 0;
 }
