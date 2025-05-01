@@ -141,7 +141,7 @@ network_register_layer(network* const net, layer* const node){
 void
 reset_pass_index(network* const net){
 	for (uint64_t i = 0;i<net->node_count;++i){
-		net->nodes[i]->pass_index = 0;
+net->nodes[i]->pass_index = 0;
 	}
 }
 
@@ -750,15 +750,16 @@ clear_activation_gradients(network* const net, layer* const node, uint64_t pass_
 	}
 }
 
-void
+double
 network_train(network* const net, double** data, uint64_t data_size, double** expected){
 	assert(data_size % net->batch_size == 0);
 	uint64_t pass = net->input->pass_index+1;
 	zero_gradients(net, net->input, pass);
 	pass += 1;
 	uint64_t i = 0;
+	double loss = 0;
 	while (i<data_size){
-		double loss = 0;
+		loss = 0;
 		for (uint64_t k = i;i<k+net->batch_size;++i){
 			memcpy(net->input->data.input.output, data[i], net->input->data.input.width*sizeof(double));
 			forward(net, net->input, pass);
@@ -784,8 +785,11 @@ network_train(network* const net, double** data, uint64_t data_size, double** ex
 		apply_gradients(net, net->input, pass);
 		pass += 1;
 		reset_simulation_flags(net, net->input);
+#ifdef WRITE_LOSS
 		printf("loss: %lf\n", loss/net->batch_size);
+#endif
 	}
+	return loss;
 }
 
 void
@@ -2492,7 +2496,6 @@ deep_copy_node(network* const net, layer* const source, pool* const mem){
 		dest->data.layer.activated = pool_request_aligned(mem, sizeof(double)*source->data.layer.width, SSE_ALIGNMENT);
 		dest->data.layer.bias_gradients = pool_request_aligned(mem, sizeof(double)*source->data.layer.width, SSE_ALIGNMENT);
 		dest->data.layer.activation_gradients = pool_request_aligned(mem, sizeof(double)*source->data.layer.width, SSE_ALIGNMENT);
-
 #else
 		dest->data.layer.prev_weights = pool_request(mem, sizeof(double)*source->prev_count);
 		dest->data.layer.weights = pool_request(mem, sizeof(double*)*source->data.layer.width);
@@ -2542,6 +2545,7 @@ deep_copy_node(network* const net, layer* const source, pool* const mem){
 network*
 deep_copy_network(network* const source, pool* const mem){
 	network* new = pool_request(mem, sizeof(network));
+	new->mem = mem;
 	new->loss = source->loss;
 	new->derivative = source->derivative;
 	new->bias = source->bias;
@@ -2570,6 +2574,157 @@ deep_copy_network(network* const source, pool* const mem){
 		new->nodes[i] = deep_copy_node(source, source->nodes[i], mem);
 	}
 	return new;
+}
+
+void mutate_network(network* const net){
+	uint8_t grow = random() % 5;
+	switch (grow){
+	case 0:
+		layer* new = grow_layer(net->mem);
+		uint64_t new_id = network_register_layer(net, new);
+		uint64_t in_id = random() % net->node_count;
+		uint64_t out_id = random() % net->node_count;
+		while ((net->nodes[in_id] == net->output)
+			|| (net->nodes[out_id] == net->input)
+			|| (in_id == new_id || out_id == new_id)
+		){
+			in_id = random() % net->node_count;
+			out_id = random() % net->node_count;
+		}
+		allocate_node_weights(net, net->mem, new);
+		zero_node_gradients(net, new);
+		layer_link_built(net, in_id, new_id);
+		layer_link_built(net, new_id, out_id);
+		network_rebuild(net);
+		break;
+	case 1:
+		uint8_t valid = 0;
+		uint64_t src_id;
+		uint64_t dst_id;
+		while (!valid){
+			src_id = rand() % net->node_count;
+			dst_id = rand() % net->node_count;
+			while ((net->nodes[src_id] == net->output) || (net->nodes[dst_id] == net->input)){
+				src_id = rand() % net->node_count;
+				dst_id = rand() % net->node_count;
+			}
+			layer* dstnode = net->nodes[dst_id];
+			valid = 1;
+			for (uint64_t p = 0;p<dstnode->prev_count;++p){
+				if (dstnode->prev[p] == src_id){
+					valid = 0;
+					break;
+				}
+			}
+		}
+		layer_link_built(net, src_id, dst_id);
+		network_rebuild(net);
+		break;
+	case 2:
+		uint64_t node = random() % net->node_count;
+		if (net->nodes[node] == net->input){
+			node = (node+1) % net->node_count;
+		}
+		layer* target = net->nodes[node];
+		target->data.layer.activation = random() % (ACTIVATION_SELU + 1);
+		target->data.layer.derivative = target->data.layer.activation;
+		break;
+	case 3:
+		net->loss = random() % (LOSS_HINGE + 1);
+		net->derivative = net->loss;
+		break;
+	case 4:
+		net->prune = random() % (ACTIVATION_SELU + 1);
+		break;
+	}
+}
+
+void
+grow_genetic(pool* const mem, double** training_data, uint64_t samples, double** expected, uint64_t epochs, uint64_t prune_epoch, uint64_t grow_epoch, uint64_t fork_count, uint64_t mutation_count, uint64_t initial_depth){
+	assert(initial_depth > 0);
+	pool swp[fork_count];
+	network* nets[fork_count];
+	for (uint64_t i = 0;i<fork_count;++i){
+		swp[i] = pool_alloc(TEMP_POOL_SIZE, POOL_STATIC);
+	}
+	double loss[fork_count];
+	for (uint64_t i = 0;i<fork_count;++i){
+		loss[i] = 0;
+	}
+	layer* input = input_init(mem, 8);
+	layer* output = layer_init(mem, 8, ACTIVATION_SIGMOID, 0);
+	network net = network_init(
+		mem,
+		input, output,
+		WEIGHT_INITIALIZATION_XAVIER,
+		BIAS_INITIALIZATION_ZERO,
+		LAYER_WEIGHT_INITIALIZATION_NORMAL,
+		ACTIVATION_RELU,
+		1, 2,
+		0, 0,
+		0, 0,
+		0,
+		16, 0.001,
+		5,
+		LOSS_MSE
+	);
+	uint64_t in = network_register_layer(&net, net.input);
+	uint64_t out = network_register_layer(&net, net.output);
+	uint64_t input_id = in;
+	for (uint64_t i = 0;i<initial_depth;++i){
+		layer* initial = grow_layer(net.mem);
+		uint64_t init = network_register_layer(&net, initial);
+		layer_link(&net, net.mem, input_id, init);
+		input_id = init;
+	}
+	layer_link(&net, net.mem, input_id, out);
+	network_build(&net);
+	net.layers_weighted = 1;
+	/* convention for adding a node:
+	     register
+	     link to and from desired with layer_link_built
+	     call network_rebuild
+	*/
+	for (uint64_t i = 0;i<fork_count;++i){
+		nets[i] = deep_copy_network(&net, &swp[i]);
+		if (i != 0){
+			for (uint64_t k = 0;k<mutation_count;++k){
+				mutate_network(nets[i]);
+			}
+		}
+	}
+	for (uint64_t i = 0;i<epochs;++i){
+		for (uint64_t f = 0;f<fork_count;++f){
+			loss[f] = network_train(nets[f], training_data, samples, expected);
+		}
+		if (i==0) {
+			continue;
+		}
+		if (i % prune_epoch == 0){
+			for (uint64_t f = 0;f<fork_count;++f){
+				network_prune(nets[f]);
+			}
+		}
+		if (i % grow_epoch == 0){
+			uint8_t min_loss_tracker = 0;
+			double min_loss = loss[0];
+			for (uint64_t f = 0;f<fork_count;++f){
+				if (loss[f] < min_loss){
+					min_loss_tracker = f;
+				}
+			}
+			net = *nets[min_loss_tracker];
+			for (uint64_t f = 0;f<fork_count;++f){
+				pool_empty(&swp[f]);
+				nets[f] = deep_copy_network(&net, &swp[f]);
+				if (f != 0){
+					for (uint64_t k = 0;k<mutation_count;++k){
+						mutate_network(nets[f]);
+					}
+				}
+			}
+		}
+	}
 }
 
 int
@@ -2620,13 +2775,14 @@ main(int argc, char** argv){
 			pos = 0;
 		}
 	}
-	grow_network_sparse(
-		&net,
-		training_data, samples, expected,
-		1000, 100, 200
-	);
-	prediction_vector vec = predict_vector_batched(&net, &mem, &training_data, 1, net.batch_size, net.input->data.input.width);
-	printf("predicted %lu (%lf) \n", vec.class[0], vec.probability[0]);
+	//grow_network_sparse(
+		//&net,
+		//training_data, samples, expected,
+		//1000, 100, 200
+	//);
+	//prediction_vector vec = predict_vector_batched(&net, &mem, &training_data, 1, net.batch_size, net.input->data.input.width);
+	//printf("predicted %lu (%lf) \n", vec.class[0], vec.probability[0]);
+	grow_genetic(&mem, training_data, samples, expected, 1000, 100, 200, 4, 1, 2);
 	pool_dealloc(&mem);
 	return 0;
 }

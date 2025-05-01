@@ -5,6 +5,8 @@
 #include <time.h>
 #include <stdio.h>
 
+#define WRITE_LOSS
+
 #ifdef __SSE__
 #include <xmmintrin.h>
 
@@ -190,7 +192,7 @@ void backward(network* const net, layer* const node);
 void apply_gradients(network* const net, layer* const node, uint64_t pass_index);
 void zero_gradients(network* const net, layer* const node, uint64_t pass_index);
 void clear_activation_gradients(network* const net, layer* const node, uint64_t pass_index);
-void network_train(network* const net, double** data, uint64_t data_size, double** expected);
+double network_train(network* const net, double** data, uint64_t data_size, double** expected);
 void init_params(network* const net, layer* const node, uint64_t pass_index);
 
 void set_seed(time_t seed);
@@ -284,7 +286,9 @@ layer* grow_layer(pool* const mem);
 void network_rebuild(network* const net);
 void grow_network_sparse(network* const net, double** training_data, uint64_t samples, double** expected, uint64_t epochs, uint64_t prune_epoch, uint64_t grow_epoch);
 
+void grow_genetic(pool* const mem, double** training_data, uint64_t samples, double** expected, uint64_t epochs, uint64_t prune_epoch, uint64_t grow_epoch, uint64_t fork_count, uint64_t mutation_count, uint64_t initial_depth);
 layer* deep_copy_node(network* const net, layer* const source, pool* const mem);
 network* deep_copy_network(network* const source, pool* const mem);
+
 
 #endif
