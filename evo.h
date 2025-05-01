@@ -286,10 +286,10 @@ layer* grow_layer(pool* const mem);
 void network_rebuild(network* const net);
 void grow_network_sparse(network* const net, double** training_data, uint64_t samples, double** expected, uint64_t epochs, uint64_t prune_epoch, uint64_t grow_epoch);
 
-void grow_genetic(pool* const mem, double** training_data, uint64_t samples, double** expected, uint64_t epochs, uint64_t prune_epoch, uint64_t grow_epoch, uint64_t fork_count, uint64_t mutation_count, uint64_t initial_depth, uint8_t retrain);
+void grow_mutation(pool* const mem, double** training_data, uint64_t samples, double** expected, uint64_t epochs, uint64_t prune_epoch, uint64_t grow_epoch, uint64_t fork_count, uint64_t mutation_count, uint64_t initial_depth, uint8_t retrain, uint8_t layers_weighted, uint64_t layer_width, uint64_t batch_size, double learning_rate, WEIGHT_FUNC weight, BIAS_FUNC bias, LAYER_WEIGHT_FUNC layer_weight, ACTIVATION_FUNC prune, ACTIVATION_FUNC node_activation);
 layer* deep_copy_node(network* const source_net, network* const net, layer* const source, pool* const mem);
 network* deep_copy_network(network* const source, pool* const mem);
 void reallocate_weights(network* const net);
-
+void mutation_search_exhaustive( pool* const mem, double** training_data, uint64_t samples, double** expected);
 
 #endif

@@ -2642,7 +2642,7 @@ void mutate_network(network* const net){
 }
 
 void
-grow_genetic(
+grow_mutation(
 	pool* const mem,
 	double** training_data,
 	uint64_t samples,
@@ -2653,7 +2653,14 @@ grow_genetic(
 	uint64_t fork_count,
 	uint64_t mutation_count,
 	uint64_t initial_depth,
-	uint8_t retrain
+	uint8_t retrain,
+	uint8_t layers_weighted,
+	uint64_t layer_width,
+	uint64_t batch_size,
+	double learning_rate,
+	WEIGHT_FUNC weight, BIAS_FUNC bias,
+	LAYER_WEIGHT_FUNC layer_weight, ACTIVATION_FUNC prune,
+	ACTIVATION_FUNC node_activation
 ){
 	assert(initial_depth > 0);
 	pool swp[fork_count];
@@ -2665,20 +2672,20 @@ grow_genetic(
 	for (uint64_t i = 0;i<fork_count;++i){
 		loss[i] = 0;
 	}
-	layer* input = input_init(mem, 8);
-	layer* output = layer_init(mem, 8, ACTIVATION_SIGMOID, 0);
+	layer* input = input_init(mem, layer_width);
+	layer* output = layer_init(mem, layer_width, node_activation, 0);
 	network net = network_init(
 		mem,
 		input, output,
-		WEIGHT_INITIALIZATION_XAVIER,
-		BIAS_INITIALIZATION_ZERO,
-		LAYER_WEIGHT_INITIALIZATION_NORMAL,
-		ACTIVATION_RELU,
+		weight,
+		bias,
+		layer_weight,
+		prune,
 		1, 2,
 		0, 0,
 		0, 0,
 		0,
-		16, 0.001,
+		batch_size, learning_rate,
 		5,
 		LOSS_MSE
 	);
@@ -2693,7 +2700,7 @@ grow_genetic(
 	}
 	layer_link(&net, net.mem, input_id, out);
 	network_build(&net);
-	net.layers_weighted = 1;
+	net.layers_weighted = layers_weighted;
 	/* convention for adding a node:
 	     register
 	     link to and from desired with layer_link_built
@@ -2768,6 +2775,36 @@ reallocate_weights(network* const net){
 	}
 }
 
+void
+mutation_search_exhaustive(
+	pool* const mem,
+	double** training_data,
+	uint64_t samples,
+	double** expected
+){
+	uint64_t seed = time(NULL);
+	printf("seed: %lu\n", seed);
+	set_seed(seed);
+	grow_mutation(mem, training_data, samples, expected,
+		1000,
+		5,
+		10,
+		4,
+		1,
+		2,
+		1,
+		1,
+		16,
+		16,
+		0.001,
+		WEIGHT_INITIALIZATION_XAVIER,
+		BIAS_INITIALIZATION_ZERO,
+		LAYER_WEIGHT_INITIALIZATION_NORMAL,
+		ACTIVATION_RELU,
+		ACTIVATION_SIGMOID
+	);
+}
+
 int
 main(int argc, char** argv){
 	set_seed(time(NULL));
@@ -2816,22 +2853,9 @@ main(int argc, char** argv){
 			pos = 0;
 		}
 	}
-	//grow_network_sparse(
-		//&net,
-		//training_data, samples, expected,
-		//1000, 100, 200
-	//);
+	mutation_search_exhaustive(&mem, training_data, samples, expected);
 	//prediction_vector vec = predict_vector_batched(&net, &mem, &training_data, 1, net.batch_size, net.input->data.input.width);
 	//printf("predicted %lu (%lf) \n", vec.class[0], vec.probability[0]);
-	grow_genetic(&mem, training_data, samples, expected,
-		1000,
-		5,
-		10,
-		4,
-		1,
-		2,
-		1
-	);
 	pool_dealloc(&mem);
 	return 0;
 }
