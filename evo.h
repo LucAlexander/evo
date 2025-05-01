@@ -8,6 +8,7 @@
 //#define WRITE_LOSS
 //#define WRITE_LOSS_GENETIC
 #define TRAIN_PRUNE_LOSS
+#define ABLATION_LOSS
 
 #ifdef __SSE__
 #include <xmmintrin.h>

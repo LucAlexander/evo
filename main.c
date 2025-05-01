@@ -2822,7 +2822,9 @@ supergraph_compose(network* const net, ACTIVATION_FUNC node_activation, uint64_t
 				}
 				layer_link(net, net->mem, input_id, n);
 				if (full_compose == 1){
-					layer_link(net, net->mem, n, input_id);
+					if (input_id != in){
+						layer_link(net, net->mem, n, input_id);
+					}
 				}
 			}
 			input_id = id;
@@ -2898,18 +2900,70 @@ supergraph_ablation(){
 			pos = 0;
 		}
 	}
-	supergraph_param_set S[1] = {
+	supergraph_param_set S[] = {
 		{
-			WEIGHT_INITIALIZATION_XAVIER,
-			BIAS_INITIALIZATION_ZERO,
-			LAYER_WEIGHT_INITIALIZATION_NORMAL,
-			ACTIVATION_SIGMOID,
-			ACTIVATION_SIGMOID,
-			LOSS_MSE,
-			0, 0, 0, 0, 0, 0, 0,
-			1000, 10,
-			3, 3, 16,
-			1, 0
+			.wi=WEIGHT_INITIALIZATION_XAVIER, .bi=BIAS_INITIALIZATION_ZERO, .li=LAYER_WEIGHT_INITIALIZATION_NORMAL,
+			.prune=ACTIVATION_SIGMOID, .activation=ACTIVATION_SIGMOID, .loss=LOSS_MSE,
+			.wa=0, .wb=0, .ba=0, .bb=0, .la=0, .lb=0, .pa=0, .layer_param=0,
+			.epochs=1000, .prune_epoch=10,
+			.supergraph_width=3, .supergraph_depth=3, .layer_width=16,
+			.layers_weighted=0, .full_compose=1
+		},
+		{
+			.wi=WEIGHT_INITIALIZATION_XAVIER, .bi=BIAS_INITIALIZATION_ZERO, .li=LAYER_WEIGHT_INITIALIZATION_NORMAL,
+			.prune=ACTIVATION_SIGMOID, .activation=ACTIVATION_SIGMOID, .loss=LOSS_MSE,
+			.wa=0, .wb=0, .ba=0, .bb=0, .la=0, .lb=0, .pa=0, .layer_param=0,
+			.epochs=1000, .prune_epoch=10,
+			.supergraph_width=3, .supergraph_depth=3, .layer_width=16,
+			.layers_weighted=1, .full_compose=0
+		},
+		{
+			.wi=WEIGHT_INITIALIZATION_XAVIER, .bi=BIAS_INITIALIZATION_ZERO, .li=LAYER_WEIGHT_INITIALIZATION_NORMAL,
+			.prune=ACTIVATION_SIGMOID, .activation=ACTIVATION_SIGMOID, .loss=LOSS_MSE,
+			.wa=0, .wb=0, .ba=0, .bb=0, .la=0, .lb=0, .pa=0, .layer_param=0,
+			.epochs=1000, .prune_epoch=10,
+			.supergraph_width=3, .supergraph_depth=3, .layer_width=16,
+			.layers_weighted=1, .full_compose=1
+		},
+		{
+			.wi=WEIGHT_INITIALIZATION_XAVIER, .bi=BIAS_INITIALIZATION_ZERO, .li=LAYER_WEIGHT_INITIALIZATION_STRONG,
+			.prune=ACTIVATION_SIGMOID, .activation=ACTIVATION_SIGMOID, .loss=LOSS_MSE,
+			.wa=0, .wb=0, .ba=0, .bb=0, .la=0, .lb=0, .pa=0, .layer_param=0,
+			.epochs=1000, .prune_epoch=10,
+			.supergraph_width=3, .supergraph_depth=3, .layer_width=16,
+			.layers_weighted=1, .full_compose=1
+		},
+		{
+			.wi=WEIGHT_INITIALIZATION_XAVIER, .bi=BIAS_INITIALIZATION_ZERO, .li=LAYER_WEIGHT_INITIALIZATION_UNIFORM,
+			.prune=ACTIVATION_SIGMOID, .activation=ACTIVATION_SIGMOID, .loss=LOSS_MSE,
+			.wa=0, .wb=0, .ba=0, .bb=0, .la=0, .lb=0, .pa=0, .layer_param=0,
+			.epochs=1000, .prune_epoch=10,
+			.supergraph_width=3, .supergraph_depth=3, .layer_width=16,
+			.layers_weighted=1, .full_compose=1
+		},
+		{
+			.wi=WEIGHT_INITIALIZATION_XAVIER, .bi=BIAS_INITIALIZATION_ZERO, .li=LAYER_WEIGHT_INITIALIZATION_PARAMETRIC,
+			.prune=ACTIVATION_SIGMOID, .activation=ACTIVATION_SIGMOID, .loss=LOSS_MSE,
+			.wa=0, .wb=0, .ba=0, .bb=0, .la=0.5, .lb=0, .pa=0, .layer_param=0,
+			.epochs=1000, .prune_epoch=10,
+			.supergraph_width=3, .supergraph_depth=3, .layer_width=16,
+			.layers_weighted=1, .full_compose=1
+		},
+		{
+			.wi=WEIGHT_INITIALIZATION_XAVIER, .bi=BIAS_INITIALIZATION_ZERO, .li=LAYER_WEIGHT_INITIALIZATION_PARAMETRIC,
+			.prune=ACTIVATION_SIGMOID, .activation=ACTIVATION_SIGMOID, .loss=LOSS_MSE,
+			.wa=0, .wb=0, .ba=0, .bb=0, .la=0.75, .lb=0, .pa=0, .layer_param=0,
+			.epochs=1000, .prune_epoch=10,
+			.supergraph_width=3, .supergraph_depth=3, .layer_width=16,
+			.layers_weighted=1, .full_compose=1
+		},
+		{
+			.wi=WEIGHT_INITIALIZATION_XAVIER, .bi=BIAS_INITIALIZATION_ZERO, .li=LAYER_WEIGHT_INITIALIZATION_NORMAL,
+			.prune=ACTIVATION_RELU, .activation=ACTIVATION_SIGMOID, .loss=LOSS_MSE,
+			.wa=0, .wb=0, .ba=0, .bb=0, .la=0, .lb=0, .pa=0, .layer_param=0,
+			.epochs=1000, .prune_epoch=10,
+			.supergraph_width=3, .supergraph_depth=3, .layer_width=16,
+			.layers_weighted=1, .full_compose=1
 		}
 	};
 	uint64_t len = sizeof(S)/sizeof(S[0]);
@@ -2947,6 +3001,9 @@ supergraph_ablation(){
 			S[0].epochs,
 			S[0].prune_epoch
 		);
+#ifdef ABLATION_LOSS
+		printf("ablation loss: %lf\n", loss);
+#endif
 		pool_load(&mem);
 	}
 	pool_dealloc(&mem);
@@ -3000,7 +3057,8 @@ main(int argc, char** argv){
 			pos = 0;
 		}
 	}
-	{
+	supergraph_ablation();
+	if (0){
 		supergraph_compose(&net, ACTIVATION_SIGMOID, 128, 0, 3, 3, 0);
 		printf("supergraph composed\n");
 		uint64_t epochs = 1000;
