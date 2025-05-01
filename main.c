@@ -2652,7 +2652,8 @@ grow_genetic(
 	uint64_t grow_epoch,
 	uint64_t fork_count,
 	uint64_t mutation_count,
-	uint64_t initial_depth
+	uint64_t initial_depth,
+	uint8_t retrain
 ){
 	assert(initial_depth > 0);
 	pool swp[fork_count];
@@ -2744,6 +2745,9 @@ grow_genetic(
 			for (uint64_t f = 0;f<fork_count;++f){
 				pool_empty(&swp[f]);
 				nets[f] = deep_copy_network(&net, &swp[f]);
+				if (retrain == 1){
+					reallocate_weights(nets[f]);
+				}
 				if (f != 0){
 					for (uint64_t k = 0;k<mutation_count;++k){
 						mutate_network(nets[f]);
@@ -2751,6 +2755,16 @@ grow_genetic(
 				}
 			}
 		}
+	}
+}
+
+void
+reallocate_weights(network* const net){
+	for (uint64_t i = 0;i<net->node_count;++i){
+		if (net->nodes[i] == net->input){
+			continue;
+		}
+		allocate_node_weights(net, net->mem, net->nodes[i]);
 	}
 }
 
@@ -2815,7 +2829,8 @@ main(int argc, char** argv){
 		10,
 		4,
 		1,
-		2
+		2,
+		1
 	);
 	pool_dealloc(&mem);
 	return 0;
