@@ -294,9 +294,10 @@ network* deep_copy_network(network* const source, pool* const mem);
 void reallocate_weights(network* const net);
 void mutation_search_exhaustive(pool* const mem, double** training_data, uint64_t samples, double** expected);
 void supergraph_compose(network* const net, ACTIVATION_FUNC node_activation, uint64_t layer_width, double layer_param, uint64_t width, uint64_t depth, uint8_t full_compose);
-double network_train_prune_loop( network* const net, double** training_data, uint64_t samples, double** expected, uint64_t epochs, uint64_t prune_epoch);
+double network_train_prune_loop(FILE* outfile, network* const net, double** training_data, uint64_t samples, double** expected, uint64_t epochs, uint64_t prune_epoch);
 
 typedef struct supergraph_param_set {
+	char* filename;
 	WEIGHT_FUNC wi;
 	BIAS_FUNC bi;
 	LAYER_WEIGHT_FUNC li;

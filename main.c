@@ -2842,6 +2842,7 @@ supergraph_compose(network* const net, ACTIVATION_FUNC node_activation, uint64_t
 
 double
 network_train_prune_loop(
+	FILE* outfile,
 	network* const net,
 	double** training_data,
 	uint64_t samples,
@@ -2853,7 +2854,7 @@ network_train_prune_loop(
 		uint64_t start = time(NULL);
 		double loss = network_train(net, training_data, samples, expected);
 #ifdef TRAIN_PRUNE_LOSS
-		printf("train prune loop loss: %lf (%lu s)\n", loss, time(NULL)-start);
+		fprintf(outfile, "train prune loop loss: %lf (%lu s)\n", loss, time(NULL)-start);
 #endif
 		if (i == 0){
 			continue;
@@ -2861,7 +2862,7 @@ network_train_prune_loop(
 		if (i%prune_epoch == 0){
 			network_prune(net);
 #ifdef TRAIN_PRUNE_LOSS
-			printf("pruned\n");
+			fprintf(outfile, "pruned\n");
 #endif
 		}
 	}
@@ -2906,128 +2907,130 @@ supergraph_ablation(){
 		}
 	}
 	supergraph_param_set S[] = {
-		{
+		{ .filename="ablation/full_unweighted.log",
 			.wi=WEIGHT_INITIALIZATION_XAVIER, .bi=BIAS_INITIALIZATION_ZERO, .li=LAYER_WEIGHT_INITIALIZATION_NORMAL,
 			.prune=ACTIVATION_SIGMOID, .activation=ACTIVATION_SIGMOID, .loss=LOSS_MSE,
 			.wa=0, .wb=0, .ba=0, .bb=0, .la=0, .lb=0, .pa=0, .layer_param=0,
-			.epochs=100, .prune_epoch=10,
+			.epochs=1000, .prune_epoch=10,
 			.supergraph_width=3, .supergraph_depth=3, .layer_width=16,
 			.layers_weighted=0, .full_compose=1
 		},
-		{
+		{ .filename="ablation/partial_weighted.log",
 			.wi=WEIGHT_INITIALIZATION_XAVIER, .bi=BIAS_INITIALIZATION_ZERO, .li=LAYER_WEIGHT_INITIALIZATION_NORMAL,
 			.prune=ACTIVATION_SIGMOID, .activation=ACTIVATION_SIGMOID, .loss=LOSS_MSE,
 			.wa=0, .wb=0, .ba=0, .bb=0, .la=0, .lb=0, .pa=0, .layer_param=0,
-			.epochs=100, .prune_epoch=10,
+			.epochs=1000, .prune_epoch=10,
 			.supergraph_width=3, .supergraph_depth=3, .layer_width=16,
 			.layers_weighted=1, .full_compose=0
 		},
-		{
+		{ .filename="ablation/full_weighted.log",
 			.wi=WEIGHT_INITIALIZATION_XAVIER, .bi=BIAS_INITIALIZATION_ZERO, .li=LAYER_WEIGHT_INITIALIZATION_NORMAL,
 			.prune=ACTIVATION_SIGMOID, .activation=ACTIVATION_SIGMOID, .loss=LOSS_MSE,
 			.wa=0, .wb=0, .ba=0, .bb=0, .la=0, .lb=0, .pa=0, .layer_param=0,
-			.epochs=100, .prune_epoch=10,
+			.epochs=1000, .prune_epoch=10,
 			.supergraph_width=3, .supergraph_depth=3, .layer_width=16,
 			.layers_weighted=1, .full_compose=1
 		},
-		{
+		{ .filename="ablation/strong.log",
 			.wi=WEIGHT_INITIALIZATION_XAVIER, .bi=BIAS_INITIALIZATION_ZERO, .li=LAYER_WEIGHT_INITIALIZATION_STRONG,
 			.prune=ACTIVATION_SIGMOID, .activation=ACTIVATION_SIGMOID, .loss=LOSS_MSE,
 			.wa=0, .wb=0, .ba=0, .bb=0, .la=0, .lb=0, .pa=0, .layer_param=0,
-			.epochs=100, .prune_epoch=10,
+			.epochs=1000, .prune_epoch=10,
 			.supergraph_width=3, .supergraph_depth=3, .layer_width=16,
 			.layers_weighted=1, .full_compose=1
 		},
-		{
+		{ .filename="ablation/uniform.log",
 			.wi=WEIGHT_INITIALIZATION_XAVIER, .bi=BIAS_INITIALIZATION_ZERO, .li=LAYER_WEIGHT_INITIALIZATION_UNIFORM,
 			.prune=ACTIVATION_SIGMOID, .activation=ACTIVATION_SIGMOID, .loss=LOSS_MSE,
 			.wa=0, .wb=0, .ba=0, .bb=0, .la=0, .lb=0, .pa=0, .layer_param=0,
-			.epochs=100, .prune_epoch=10,
+			.epochs=1000, .prune_epoch=10,
 			.supergraph_width=3, .supergraph_depth=3, .layer_width=16,
 			.layers_weighted=1, .full_compose=1
 		},
-		{
+		{ .filename="ablation/param_0.5.log",
 			.wi=WEIGHT_INITIALIZATION_XAVIER, .bi=BIAS_INITIALIZATION_ZERO, .li=LAYER_WEIGHT_INITIALIZATION_PARAMETRIC,
 			.prune=ACTIVATION_SIGMOID, .activation=ACTIVATION_SIGMOID, .loss=LOSS_MSE,
 			.wa=0, .wb=0, .ba=0, .bb=0, .la=0.5, .lb=0, .pa=0, .layer_param=0,
-			.epochs=100, .prune_epoch=10,
+			.epochs=1000, .prune_epoch=10,
 			.supergraph_width=3, .supergraph_depth=3, .layer_width=16,
 			.layers_weighted=1, .full_compose=1
 		},
-		{
+		{ .filename="ablation/param_0.75.log",
 			.wi=WEIGHT_INITIALIZATION_XAVIER, .bi=BIAS_INITIALIZATION_ZERO, .li=LAYER_WEIGHT_INITIALIZATION_PARAMETRIC,
 			.prune=ACTIVATION_SIGMOID, .activation=ACTIVATION_SIGMOID, .loss=LOSS_MSE,
 			.wa=0, .wb=0, .ba=0, .bb=0, .la=0.75, .lb=0, .pa=0, .layer_param=0,
-			.epochs=100, .prune_epoch=10,
+			.epochs=1000, .prune_epoch=10,
 			.supergraph_width=3, .supergraph_depth=3, .layer_width=16,
 			.layers_weighted=1, .full_compose=1
 		},
-		{
+		{ .filename="ablation/relu.log",
 			.wi=WEIGHT_INITIALIZATION_XAVIER, .bi=BIAS_INITIALIZATION_ZERO, .li=LAYER_WEIGHT_INITIALIZATION_NORMAL,
 			.prune=ACTIVATION_RELU, .activation=ACTIVATION_SIGMOID, .loss=LOSS_MSE,
 			.wa=0, .wb=0, .ba=0, .bb=0, .la=0, .lb=0, .pa=0, .layer_param=0,
-			.epochs=100, .prune_epoch=10,
+			.epochs=1000, .prune_epoch=10,
 			.supergraph_width=3, .supergraph_depth=3, .layer_width=16,
 			.layers_weighted=1, .full_compose=1
 		},
-		{
+		{ .filename="ablation/prune_5.log",
 			.wi=WEIGHT_INITIALIZATION_XAVIER, .bi=BIAS_INITIALIZATION_ZERO, .li=LAYER_WEIGHT_INITIALIZATION_NORMAL,
 			.prune=ACTIVATION_SIGMOID, .activation=ACTIVATION_SIGMOID, .loss=LOSS_MSE,
 			.wa=0, .wb=0, .ba=0, .bb=0, .la=0, .lb=0, .pa=0, .layer_param=0,
-			.epochs=100, .prune_epoch=5,
+			.epochs=1000, .prune_epoch=5,
 			.supergraph_width=3, .supergraph_depth=3, .layer_width=16,
 			.layers_weighted=1, .full_compose=1
 		},
-		{
+		{ .filename="ablation/prune_20.log",
 			.wi=WEIGHT_INITIALIZATION_XAVIER, .bi=BIAS_INITIALIZATION_ZERO, .li=LAYER_WEIGHT_INITIALIZATION_NORMAL,
 			.prune=ACTIVATION_SIGMOID, .activation=ACTIVATION_SIGMOID, .loss=LOSS_MSE,
 			.wa=0, .wb=0, .ba=0, .bb=0, .la=0, .lb=0, .pa=0, .layer_param=0,
-			.epochs=100, .prune_epoch=20,
+			.epochs=1000, .prune_epoch=20,
 			.supergraph_width=3, .supergraph_depth=3, .layer_width=16,
 			.layers_weighted=1, .full_compose=1
 		}
-
 	};
 	uint64_t len = sizeof(S)/sizeof(S[0]);
 	for (uint64_t i = 0;i<len;++i){
 		pool_save(&mem);
 		layer* input = input_init(&mem, input_width);
-		layer* output = layer_init(&mem, output_width, S[0].activation, 0);
+		layer* output = layer_init(&mem, output_width, S[i].activation, 0);
 		network net = network_init(
 			&mem,
 			input, output,
-			S[0].wi,
-			S[0].bi,
-			S[0].li,
-			S[0].prune,
-			S[0].wa, S[0].wb, S[0].ba, S[0].bb, S[0].la, S[0].lb, S[0].pa,
+			S[i].wi,
+			S[i].bi,
+			S[i].li,
+			S[i].prune,
+			S[i].wa, S[i].wb, S[i].ba, S[i].bb, S[i].la, S[i].lb, S[i].pa,
 			16, 0.001,
 			5,
 			S[0].loss
 		);
 		supergraph_compose(
 			&net,
-			S[0].activation,
-			S[0].layer_width,
-			S[0].layer_param,
-			S[0].supergraph_width,
-			S[0].supergraph_depth,
-			S[0].full_compose
+			S[i].activation,
+			S[i].layer_width,
+			S[i].layer_param,
+			S[i].supergraph_width,
+			S[i].supergraph_depth,
+			S[i].full_compose
 		);
 		net.layers_weighted = S[0].layers_weighted;
 		printf("supergraph composed\n");
 		uint64_t start = time(NULL);
+		FILE* outfile = fopen(S[i].filename, "w");
 		double loss = network_train_prune_loop(
+			outfile,
 			&net,
 			training_data,
 			samples,
 			expected,
-			S[0].epochs,
-			S[0].prune_epoch
+			S[i].epochs,
+			S[i].prune_epoch
 		);
 #ifdef ABLATION_LOSS
-		printf("ablation loss: %lf (%lu s)\n", loss, time(NULL)-start);
+		fprintf(outfile, "ablation loss: %lf (%lu s)\n", loss, time(NULL)-start);
 #endif
+		fclose(outfile);
 		pool_load(&mem);
 	}
 	pool_dealloc(&mem);
@@ -3087,7 +3090,7 @@ main(int argc, char** argv){
 		printf("supergraph composed\n");
 		uint64_t epochs = 1000;
 		uint64_t prune_epoch = 10;
-		double loss = network_train_prune_loop(&net, training_data, samples, expected, epochs, prune_epoch);
+		double loss = network_train_prune_loop(stdout, &net, training_data, samples, expected, epochs, prune_epoch);
 	}
 	if (0){
 		mutation_search_exhaustive(&mem, training_data, samples, expected);
