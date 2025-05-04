@@ -2986,6 +2986,22 @@ supergraph_ablation(){
 			.epochs=1000, .prune_epoch=20,
 			.supergraph_width=3, .supergraph_depth=3, .layer_width=16,
 			.layers_weighted=1, .full_compose=1
+		},
+		{ .filename="ablation/prune_50.log",
+			.wi=WEIGHT_INITIALIZATION_XAVIER, .bi=BIAS_INITIALIZATION_ZERO, .li=LAYER_WEIGHT_INITIALIZATION_NORMAL,
+			.prune=ACTIVATION_SIGMOID, .activation=ACTIVATION_SIGMOID, .loss=LOSS_MSE,
+			.wa=0, .wb=0, .ba=0, .bb=0, .la=0, .lb=0, .pa=0, .layer_param=0,
+			.epochs=1000, .prune_epoch=50,
+			.supergraph_width=3, .supergraph_depth=3, .layer_width=16,
+			.layers_weighted=1, .full_compose=1
+		},
+		{ .filename="ablation/prune_2000.log",
+			.wi=WEIGHT_INITIALIZATION_XAVIER, .bi=BIAS_INITIALIZATION_ZERO, .li=LAYER_WEIGHT_INITIALIZATION_NORMAL,
+			.prune=ACTIVATION_SIGMOID, .activation=ACTIVATION_SIGMOID, .loss=LOSS_MSE,
+			.wa=0, .wb=0, .ba=0, .bb=0, .la=0, .lb=0, .pa=0, .layer_param=0,
+			.epochs=2000, .prune_epoch=10,
+			.supergraph_width=3, .supergraph_depth=3, .layer_width=16,
+			.layers_weighted=1, .full_compose=1
 		}
 	};
 	uint64_t len = sizeof(S)/sizeof(S[0]);
